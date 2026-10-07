@@ -180,6 +180,10 @@ node tools/brisk_mock/benchmark.cjs /tmp/brisk-mock-cache
 .venv/bin/python tools/brisk_mock/verify_browser.py --cache /tmp/brisk-mock-cache
 ```
 
+`tools/brisk_mock/test_reference.py` (same cache variable) replays the demo and
+checks that it matches the archive's committed reference fingerprint, which the
+service uses to accept only genuine replays.
+
 The last check uses installed Playwright/Chromium and compares six auction fields
 for six securities with the public demo's own JS accessors while its tutorial
 keeps replay paused. It exposes the market object in an in-memory response; it

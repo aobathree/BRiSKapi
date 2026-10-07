@@ -1,6 +1,7 @@
 """Tokyo serverless crowd archive: ticket API and automatic S3 ingest."""
 import base64
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -8,13 +9,19 @@ import tempfile
 import time
 from urllib.parse import parse_qs
 import uuid
+import zlib
 
 import boto3
 from botocore.exceptions import ClientError
-from archive_schema import inspect_package, validate_manifest, require, MAX_COMPRESSED
+from archive_schema import repack, validate_manifest, require, MAX_COMPRESSED
 
 BUCKET = os.environ.get('ARCHIVE_BUCKET', '')
 TABLE = os.environ.get('QUOTA_TABLE', '')
+# Per-deployment key: stored quota IDs cannot be reversed to IP addresses.
+QUOTA_KEY = os.environ.get('QUOTA_SALT', '').encode()
+FINAL = {'published', 'rejected'}
+# Malformed input of any kind: corrupt deflate data and deeply nested JSON included.
+INVALID = (ValueError, KeyError, TypeError, EOFError, OSError, zlib.error, RecursionError)
 
 def clients():
     from botocore.config import Config
@@ -38,6 +45,14 @@ def json_get(s3, key):
         raw = body.read(65537)
     require(len(raw) <= 65536, 'Metadata too large')
     return json.loads(raw)
+
+def discard(s3, key, version):
+    """Permanently remove one staging object version; already-removed versions are fine."""
+    try:
+        s3.delete_object(Bucket=BUCKET, Key=key, VersionId=version)
+    except ClientError as e:
+        if e.response['Error']['Code'] not in {'NoSuchKey', 'NoSuchVersion'}:
+            raise
 
 def quota(db, scope, amount, limit, window):
     now = int(time.time())
@@ -72,13 +87,12 @@ def api(event, s3, db):
     if event.get('isBase64Encoded'):
         raw = base64.b64decode(raw, validate=True).decode()
     require(len(raw) <= 65536, 'Manifest too large')
+    # Validate the complete manifest before retaining any contributor metadata.
     m = validate_manifest(json.loads(raw))
-    # Validate summary envelope before retaining any contributor metadata.
-    summary = m['summary']
-    require(set(summary) == {'source','trading_date','first_source_time_us','last_source_time_us','codes','batches','quote_updates','expanded_bytes'}, 'Invalid summary fields')
-    require(len(json.dumps(summary)) < 60000, 'Summary too large')
+    require(len(json.dumps(m['summary'])) < 60000, 'Summary too large')
+    require(QUOTA_KEY, 'Contribution service is not configured')
     ip = event['requestContext']['http'].get('sourceIp', 'unknown')
-    quota(db, 'ip-' + hashlib.sha256(ip.encode()).hexdigest(), 1, 4, 3600)
+    quota(db, 'ip-' + hmac.new(QUOTA_KEY, ip.encode(), hashlib.sha256).hexdigest(), 1, 4, 3600)
     quota(db, 'global-tickets', 1, 64, 3600)
     quota(db, 'global-bytes', m['bytes'], 5 * 1024**3, 86400)
     ticket = str(uuid.uuid4())
@@ -109,13 +123,19 @@ def ingest(record, s3, db):
             ExpressionAttributeValues={':version': {'S': version}, ':expires': {'N': str(int(time.time()) + 172800)}})
     except ClientError as e:
         if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-            return  # Ticket is bound to its first object version; retrying that version is safe.
+            # A ticket admits only its first object version. Later POSTs with the
+            # same upload form never become data and are not kept in staging.
+            discard(s3, key, version)
+            return
         raise
+    if json_get(s3, f'incoming/{ticket}/status.json').get('status') in FINAL:
+        discard(s3, key, version)  # Redelivered event for a finished ticket.
+        return
     try:
         m = json_get(s3, f'incoming/{ticket}/manifest.json')
         validate_manifest(m)
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'events.jsonl.gz'
+            path, output = Path(tmp) / 'upload.gz', Path(tmp) / 'events.jsonl.gz'
             data = s3.get_object(Bucket=BUCKET, Key=key, VersionId=version)
             require(data['ContentLength'] == m['bytes'] <= MAX_COMPRESSED, 'Invalid upload size')
             with data['Body'] as body, path.open('wb') as target:
@@ -124,9 +144,11 @@ def ingest(record, s3, db):
                     total += len(chunk)
                     require(total <= MAX_COMPRESSED, 'Upload too large')
                     target.write(chunk)
-            summary = inspect_package(path, m)
-            prefix = f"archive/{summary['trading_date']}/{m['sha256']}"
-            with path.open('rb') as body:
+            # Publish the service's own compression of validated canonical lines,
+            # never the uploaded bytes.
+            published = repack(path, m, output)
+            prefix = f"archive/{published['summary']['trading_date']}/{published['sha256']}"
+            with output.open('rb') as body:
                 try:
                     s3.put_object(Bucket=BUCKET, Key=f'{prefix}/events.jsonl.gz', Body=body,
                                   ContentType='application/gzip', IfNoneMatch='*')
@@ -134,11 +156,12 @@ def ingest(record, s3, db):
                     if e.response['Error']['Code'] not in {'PreconditionFailed', 'ConditionalRequestConflict'}:
                         raise
             # Manifest is the commit marker. Readers list only committed datasets.
-            json_put(s3, f'{prefix}/manifest.json', m, immutable=True)
-            json_put(s3, f'incoming/{ticket}/status.json', {'status': 'published', 'prefix': prefix, 'sha256': m['sha256']})
-    except (ValueError, KeyError, TypeError, EOFError, OSError) as e:
+            json_put(s3, f'{prefix}/manifest.json', published, immutable=True)
+            json_put(s3, f'incoming/{ticket}/status.json', {'status': 'published', 'prefix': prefix, 'sha256': published['sha256']})
+    except INVALID as e:
         # No raw payload or potentially sensitive contents in public status/logs.
         json_put(s3, f'incoming/{ticket}/status.json', {'status': 'rejected', 'reason': type(e).__name__})
+    discard(s3, key, version)
 
 def handler(event, context):
     s3, db = clients()
@@ -148,5 +171,5 @@ def handler(event, context):
         return {'ok': True}
     try:
         return api(event, s3, db)
-    except (ValueError, KeyError, TypeError) as e:
+    except INVALID as e:
         return response(400, {'error': str(e)[:160]})

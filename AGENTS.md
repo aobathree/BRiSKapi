@@ -4,9 +4,10 @@ Use Python in `.venv`; install `requirements-dev.txt` for local archive tests.
 Do not commit downloaded vendor assets, market recordings, AWS credentials or
 upload tickets. Public `archive.json` contains only bucket, region and API URL.
 
-Run focused archive coverage (minimum 85%), Node tests, Rust tests/fmt/Clippy and,
-when changing the bus integration, the actual v2 tests. CI supplies downloaded
-demo fixtures. Keep README and schema documentation synchronized.
+Run focused archive and API coverage (minimum 85%), the fixture reference test,
+Node tests, Rust tests/fmt/Clippy and, when changing the bus integration, the
+actual v2 tests. CI supplies downloaded demo fixtures. Keep README, PRIVACY.md and
+schema documentation synchronized; changes to collected data bump `POLICY_VERSION`.
 
 `infra/deploy.py` mutates AWS resources and is reserved for explicit deployment
 work. `cloud_smoke.py` publishes self-authored synthetic data to the configured
