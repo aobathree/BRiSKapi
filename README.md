@@ -1,6 +1,8 @@
-# BRiSK API, live feed and shared archive
+# briskapi
 
-A pybrisk-style Python API and `brisk` command line for BRiSK auction data:
+An unofficial, pybrisk-style Python API and `brisk` command line for BRiSK
+auction data. It is an independent project, not affiliated with or endorsed by
+BRiSK, Tachibana, SBI, TSE or JPX.
 
 - **Consume a feed live.** `brisk.connect()` keeps auction state current as frames
   arrive. Use callbacks or iterators, and query any security at any moment.

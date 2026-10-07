@@ -12,7 +12,8 @@ With operator AWS credentials, provision a **new dedicated** installation:
 ```
 
 This updates `archive.json`. Deployment is repeatable and updates Lambda code.
-Resource names are `brisk-recorder-archive`; use a separate AWS account or change
+Resource names are `brisk-recorder-archive` (the project's former name; renaming them
+would create a second deployment). Use a separate AWS account or change
 `NAME` for a second installation. The deployer needs S3, Lambda, IAM role/policy,
 CloudWatch Logs, DynamoDB and STS access. It does not modify default AWS regions.
 
