@@ -1,5 +1,6 @@
 """Tokyo serverless crowd archive: ticket API and automatic S3 ingest."""
 import base64
+import datetime as dt
 import hashlib
 import hmac
 import json
@@ -13,7 +14,7 @@ import zlib
 
 import boto3
 from botocore.exceptions import ClientError
-from briskapi.schema import repack, validate_manifest, require, MAX_COMPRESSED
+from briskapi.schema import encode, repack, validate_manifest, validate_timing, require, MAX_COMPRESSED, MAX_TIMING_BYTES
 
 BUCKET = os.environ.get('ARCHIVE_BUCKET', '')
 TABLE = os.environ.get('QUOTA_TABLE', '')
@@ -87,12 +88,15 @@ def api(event, s3, db):
     if event.get('isBase64Encoded'):
         raw = base64.b64decode(raw, validate=True).decode()
     require(len(raw) <= 65536, 'Manifest too large')
-    # Validate the complete manifest before retaining any contributor metadata.
-    m = validate_manifest(json.loads(raw))
-    require(len(json.dumps(m['summary'])) < 60000, 'Summary too large')
+    body = json.loads(raw)
     require(QUOTA_KEY, 'Contribution service is not configured')
-    ip = event['requestContext']['http'].get('sourceIp', 'unknown')
-    quota(db, 'ip-' + hmac.new(QUOTA_KEY, ip.encode(), hashlib.sha256).hexdigest(), 1, 4, 3600)
+    ip = 'ip-' + hmac.new(QUOTA_KEY, event['requestContext']['http'].get('sourceIp', 'unknown').encode(), hashlib.sha256).hexdigest()
+    if isinstance(body, dict) and set(body) == {'timing'}:
+        return timing(body['timing'], ip, s3, db)
+    # Validate the complete manifest before retaining any contributor metadata.
+    m = validate_manifest(body)
+    require(len(json.dumps(m['summary'])) < 60000, 'Summary too large')
+    quota(db, ip, 1, 4, 3600)
     quota(db, 'global-tickets', 1, 64, 3600)
     quota(db, 'global-bytes', m['bytes'], 5 * 1024**3, 86400)
     ticket = str(uuid.uuid4())
@@ -103,6 +107,21 @@ def api(event, s3, db):
         Fields=fields, Conditions=[{'Content-Type': 'application/gzip'},
         {'x-amz-server-side-encryption': 'AES256'}, ['content-length-range', m['bytes'], m['bytes']]], ExpiresIn=900)
     return response(201, {'ticket': ticket, 'upload': post, 'expires_seconds': 900})
+
+def timing(report, ip, s3, db):
+    """Publish a timing-only report: validated, re-serialized by the service, content addressed."""
+    report = validate_timing(report, today=dt.datetime.now(dt.timezone.utc).date())
+    body = encode(report)
+    require(len(body) <= MAX_TIMING_BYTES, 'Timing report too large')
+    quota(db, 'timing-' + ip, 1, 6, 3600)
+    quota(db, 'global-timing', 1, 600, 3600)
+    key = f"timing/{report['trading_date']}/{hashlib.sha256(body).hexdigest()}.json"
+    try:
+        s3.put_object(Bucket=BUCKET, Key=key, Body=body, ContentType='application/json', IfNoneMatch='*')
+    except ClientError as e:
+        if e.response['Error']['Code'] not in {'PreconditionFailed', 'ConditionalRequestConflict'}:
+            raise
+    return response(201, {'status': 'published', 'key': key})
 
 def ingest(record, s3, db):
     from urllib.parse import unquote_plus

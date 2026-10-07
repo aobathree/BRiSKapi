@@ -68,7 +68,23 @@ security.
 
 When sharing is enabled, a demo feed also writes the session to a temporary file.
 After a clean end it packages and uploads the file, then deletes it. SBI feeds
-are never shared.
+never share market data; with sharing enabled they accumulate timing statistics
+(`briskapi/timing.py`) and contribute one timing report when they end.
+
+## Timing reports
+
+SBI market data can't be redistributed, but how the feed behaves can. A report
+(`brisk-timing-v1`) holds p50/p90/p99/max of decode time, feed-clock age at
+receipt and frame spacing, a stall count (gaps over one second), the frame
+count, trading date, first/last JST minute, client version, alias and license.
+
+The ticket API accepts `{"timing": report}`. The service checks exact fields,
+bounds and microsecond precision, monotonic percentiles, at least 100 frames and
+a trading date within the last 30 days; rate limits it (six per IP address per
+hour, 600 in total); and writes its own canonical JSON to
+`timing/YYYYMMDD/SHA256.json`, so identical reports deduplicate. A report is at
+most 2 KB, so it can't carry other data. `briskapi.Archive().timing()` reads
+them back.
 
 ## SBI BRiSK
 
@@ -112,7 +128,7 @@ simulate original exchange delivery.
 
 The public configuration is [briskapi/archive.json](briskapi/archive.json): bucket
 `brisk-recordings-honvl-tokyo` in Tokyo (`ap-northeast-1`). Anyone can read
-published `archive/` objects and list that prefix over HTTPS. `incoming/`
+published `archive/` and `timing/` objects and list those prefixes over HTTPS. `incoming/`
 (staging) is private. Deployment is described in [infra/README.md](infra/README.md).
 
 ### Integrity

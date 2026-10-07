@@ -9,6 +9,8 @@ import sys
 import urllib.error
 import zlib
 
+from briskapi.timing import TimingStats
+
 import pytest
 
 import briskapi
@@ -159,15 +161,29 @@ def test_login_sources(monkeypatch, tmp_path):
     assert not path.exists() and sbi._client is None
 
 
+OPEN_US = 9 * 3600 * 1_000_000
+MIDNIGHT_MS = int(dt.datetime(2026, 3, 11, tzinfo=JST).timestamp() * 1000)
+
+
+def sbi_session(frames=150):
+    """Bootstrap, `frames` one-quote batches 100 ms apart (20 ms old on receipt, one 1.5 s stall) and end."""
+    q = {'issue_id': 0, 'code': '7203', 'frame': 1, 'max_frame': 1, 'source_time_us': OPEN_US,
+         'indicative_price10': 101500, 'market_buy_quantity': 3, 'market_sell_quantity': 1}
+    batches = [dict(type='bootstrap', seq=0, source='sbi_live', trading_date='20260311', source_time_us=OPEN_US,
+                    market_issue_count=1, master=[{'issue_id': 0, 'code': '7203', 'name': 'Toyota'}], quotes=[q])]
+    for i in range(1, frames + 1):
+        now = OPEN_US + i * 100_000 + (1_400_000 if i > 100 else 0)
+        batches.append(dict(type='quotes', seq=i, source_time_us=now, received_unix_ms=MIDNIGHT_MS + now // 1000 + 20,
+                            decode_ns=250_000 + i * 1000, replay_lateness_ms=None,
+                            quotes=[{**q, 'frame': i + 1, 'max_frame': i + 1, 'source_time_us': now,
+                                     'last_price10': 101500 + 100 * (i == frames)}]))
+    return batches + [dict(type='end', seq=frames + 1, source_time_us=now, frames=frames, quote_updates=frames)]
+
+
 @pytest.fixture
 def fake_host(tmp_path, monkeypatch):
-    """A stand-in for sbi.cjs that checks its cookies and prints a tiny live session."""
-    q = {'issue_id': 0, 'code': '7203', 'frame': 1, 'max_frame': 1, 'source_time_us': 32400000000,
-         'indicative_price10': 101500, 'market_buy_quantity': 3, 'market_sell_quantity': 1}
-    batches = [dict(type='bootstrap', seq=0, source='sbi_live', trading_date='20260311', source_time_us=32400000000,
-                    market_issue_count=1, master=[{'issue_id': 0, 'code': '7203', 'name': 'Toyota'}], quotes=[q]),
-               dict(type='quotes', seq=1, source_time_us=32400000100, quotes=[{**q, 'frame': 2, 'last_price10': 101600}]),
-               dict(type='end', seq=2, source_time_us=32400000100, frames=2, quote_updates=1)]
+    """A stand-in for sbi.cjs that checks its cookies and prints a short live session."""
+    batches = sbi_session()
     script = tmp_path / 'sbi_fake.cjs'
     script.write_text(
         "const c = JSON.parse(process.env.BRISK_SBI_COOKIES); if (c.session_bfaf77a2 !== 'v') process.exit(9);\n"
@@ -182,7 +198,7 @@ def test_live_feed_via_node(fake_host, capfd):
     assert briskapi.current() is feed and feed.source == 'sbi_live'
     feed.wait()
     assert briskapi.Ticker('7203').quote()['last_price'] == 10160.0 and feed.contribution is None
-    assert len(briskapi.Ticker('7203').history()) == 2
+    assert len(briskapi.Ticker('7203').history()) == 151 and feed.timing_contribution is None
     # Cookies reach the host through its environment, never its (world-readable) arguments.
     assert capfd.readouterr().err.strip() == '["--codes","7203"]'
 
@@ -195,9 +211,34 @@ def test_live_feed_failure_closes(fake_host, tmp_path, monkeypatch):
 
 def test_cli_live_sbi(fake_host, monkeypatch, capsys):
     monkeypatch.setenv('BRISK_SBI_COOKIES', '{"session_bfaf77a2": "v"}')
-    monkeypatch.setattr(cli, 'interactive', lambda: True)  # never asked: SBI sessions are not shared
+    monkeypatch.setattr(cli, 'interactive', lambda: True)
+    monkeypatch.setattr(cli.sys, 'stdin', io.StringIO('\n'))
+    sent = []
+    monkeypatch.setattr(cli, 'contribute_timing', lambda report, url: sent.append(report) or {'status': 'published'})
     cli.main(['live', '--sbi', '--codes', '7203'])
     out = capsys.readouterr()
     lines = [json.loads(line) for line in out.out.splitlines()]
-    assert lines[-1]['last_price'] == 10160.0 and 'public and permanent' not in out.err
-    assert cli.load_consent() is None
+    # The question explains that SBI sessions share only a timing summary.
+    assert lines[-1]['last_price'] == 10160.0 and 'timing summary' in out.err
+    assert cli.load_consent()['enabled'] and sent[0]['source'] == 'sbi_live'
+    assert not {'quotes', 'master', 'code', 'price'} & set(json.dumps(sent[0]).replace('"', ' ').split())
+
+
+def test_sbi_feed_contributes_timing_only(fake_host, monkeypatch):
+    sent = []
+    monkeypatch.setattr(cli, 'contribute_timing', lambda report, url: sent.append((report, url)) or {'status': 'published'})
+    sbi.login({'session_bfaf77a2': 'v'})
+    with pytest.warns(UserWarning, match='undecided'):
+        assert sbi.connect().wait().timing_contribution is None and not sent
+    briskapi.consent(accept=True, contributor='erin')
+    feed = sbi.connect().wait()
+    assert feed.timing_contribution == {'status': 'published'} and feed.contribution is None
+    report, url = sent[0]
+    assert url == cli.settings()['api_url'] and report['contributor'] == 'erin'
+    assert report['frames'] == 150 and report['stalls'] == 1 and report['trading_date'] == '20260311'
+    assert report['first_minute'] == '09:00' and report['source_age_ms']['p50'] == 20
+    assert report['interarrival_ms']['max'] == 1500 and report['decode_ms']['p50'] > 0.25
+    assert sbi.connect(contribute=False).wait().timing_contribution is None and len(sent) == 1
+    monkeypatch.setattr(cli, 'contribute_timing', lambda *a: 1 / 0)
+    with pytest.warns(UserWarning, match='Timing contribution failed'):
+        assert sbi.connect().wait().timing_contribution['status'] == 'failed'

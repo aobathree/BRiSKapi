@@ -15,6 +15,7 @@ import warnings
 
 from briskapi import cli
 from briskapi._recording import BriskError, NotFoundError, Recording, Table, micros, quote_view
+from briskapi.timing import TimingStats
 
 DECODER = cli.DECODER
 _END = object()
@@ -86,10 +87,17 @@ class Feed:
     manifest = None
 
     def __init__(self, web=False, cache=None, codes=None, speed=1, limit_frames=None, contribute=None,
-                 history=False, node='node', *, command=None, env=None):
-        # `command` runs another decoder host (SBI live); such sessions are never contributed.
-        choice, upload = _consent(contribute, limit_frames) if command is None else (None, False)
-        self._choice = choice if upload else None
+                 history=False, node='node', *, command=None, env=None, timing=None):
+        # `command` runs another decoder host (SBI live). Its market data is never
+        # contributed; with `timing` set, a timing-only summary may be.
+        if command is None:
+            choice, upload = _consent(contribute, limit_frames)
+            self._choice, self._timing = (choice if upload else None), None
+        else:
+            choice, upload = _consent(contribute, None) if timing else (None, False)
+            self._choice = None
+            self._timing = (TimingStats(timing), choice) if upload else None
+        self.timing_contribution = None
         self._history = {} if history else None
         self._quotes: dict[int, dict] = {}
         self._bootstrap = None
@@ -256,6 +264,8 @@ class Feed:
                 if recorder:
                     recorder.write(line)
                 ended = batch['type'] == 'end'
+                if self._timing:
+                    self._timing[0].add(batch)
                 self._apply(batch)
             if self._closing:
                 raise BriskError('closed')
@@ -277,6 +287,8 @@ class Feed:
             self._finish()
         finally:
             _stop(self._process)
+            if self._timing and self.status in {'completed', 'closed'}:
+                self._contribute_timing()
             if recorder:
                 recorder.close()
             if self._tmp:
@@ -306,6 +318,16 @@ class Feed:
         for *_, end in listeners:
             if end:
                 end()
+
+    def _contribute_timing(self):
+        stats, choice = self._timing
+        try:
+            report = stats.report(choice['contributor'], choice['license'])
+            if report:
+                self.timing_contribution = cli.contribute_timing(report, cli.settings()['api_url'])
+        except Exception as error:  # noqa: BLE001 - the session itself succeeded; report, do not fail
+            self.timing_contribution = {'status': 'failed', 'error': str(error)}
+            warnings.warn(f'Timing contribution failed: {error}')
 
     def _contribute(self):
         package = Path(self._tmp.name) / 'package'

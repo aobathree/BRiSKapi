@@ -20,22 +20,26 @@ import warnings
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from briskapi.schema import SCHEMA, canonical_lines, compress, digest, inspect_package, validate_manifest, validate_stream, require
+from briskapi.schema import (SCHEMA, MAX_TIMING_BYTES, canonical_lines, compress, digest, inspect_package, validate_manifest,
+                             validate_stream, validate_timing, require)
 
 PACKAGE = Path(__file__).resolve().parent
 # BRiSK's own WASM decoder runs under Node; the package ships only this host and SHA-256 pins.
 DECODER = PACKAGE / 'decoder' / 'decoder.cjs'
 LICENSES = ('CC0-1.0', 'CC-BY-4.0')
 # Bump with any PRIVACY.md change to what is collected; saved choices then lapse.
-POLICY_VERSION = 1
+POLICY_VERSION = 2
 NOTICE = '''\
-Recordings and live sessions are contributed to the shared public BRiSK archive
-automatically after each clean, complete replay. Each contribution contains:
+Sessions are contributed to the shared public BRiSK archive automatically.
+After each clean, complete demo replay the contribution contains:
   - the decoded market data you recorded (checked against the reference replay);
   - local timing measurements: decode durations, replay lateness, asset download
     time and your computer's receipt clock, which shows when you recorded;
   - your public alias and data license, in the published manifest.
-Published recordings are public and permanent. Your IP address is used only for
+SBI BRiSK sessions contribute only a timing summary: decode time, data age and
+frame spacing percentiles, stalls, frame count, date and start/end minute. No
+prices, quantities or codes.
+Contributions are public and permanent. Your IP address is used only for
 upload rate limiting. No account, file, hostname or system details are sent.
 Accepting declares that you may redistribute these recordings under that license.
 Policy: https://github.com/honvl/BRiSKapi/blob/main/PRIVACY.md
@@ -147,6 +151,22 @@ def contribute(directory, api_url, timeout=660, verify=True, out=None):
 def client(config):
     return boto3.client('s3', region_name=config['region'], config=Config(signature_version=UNSIGNED))
 
+def contribute_timing(report, api_url):
+    """Publish a timing-only report (no market data); returns the service's response."""
+    return request_json(api_url, {'timing': report})
+
+def timing_reports(s3, bucket, date=None):
+    """Published timing reports, newest dates last."""
+    prefix = 'timing/'
+    if date:
+        require(len(date) == 8 and date.isdigit(), 'Date must be YYYYMMDD')
+        prefix += date + '/'
+    for page in s3.get_paginator('list_objects_v2').paginate(Bucket=bucket, Prefix=prefix):
+        for item in page.get('Contents', []):
+            body = s3.get_object(Bucket=bucket, Key=item['Key'])['Body']
+            with body:
+                yield item['Key'], validate_timing(json.loads(body.read(MAX_TIMING_BYTES + 1)))
+
 def manifests(s3, bucket, date=None):
     prefix = 'archive/'
     if date:
@@ -209,15 +229,14 @@ def live(args):
     """Print each quote update as one JSON line; a complete session is contributed per consent."""
     from briskapi import connect, sbi  # The API package builds on this module.
     codes = args.codes.split(',') if args.codes else None
-    if args.sbi:  # Your own SBI session: never contributed, so no sharing question.
-        sbi.login()
-        feed = sbi.connect(codes=codes)
-        caught = []
-    else:
-        if load_consent() is None and os.environ.get('BRISK_CONTRIBUTE') != '0' and interactive():
-            ask_consent()
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter('always')
+    if load_consent() is None and os.environ.get('BRISK_CONTRIBUTE') != '0' and interactive():
+        ask_consent()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        if args.sbi:  # Market data stays local; only a timing summary is contributed.
+            sbi.login()
+            feed = sbi.connect(codes=codes)
+        else:
             feed = connect(web=args.web, cache=args.cache, codes=codes, speed=args.speed, limit_frames=args.limit_frames)
     for warning in caught:
         print(warning.message, file=sys.stderr)

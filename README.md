@@ -101,8 +101,9 @@ Requests are limited to one per second.
 The live feed runs SBI's own decoder under Node, downloaded with your session;
 no browser is involved. It hasn't yet been validated against a live SBI session,
 so it fails with an explicit error rather than guessing. Please report what you
-see. Your cookies go only to sbi.brisk.jp, and SBI data is never shared to the
-archive.
+see. Your cookies go only to sbi.brisk.jp, and SBI market data never leaves
+your computer. With sharing on, a session contributes only a timing summary (see
+below).
 
 ## API reference
 
@@ -153,10 +154,13 @@ overwrites an existing folder.
 The first time you record or start a demo live session from the command line,
 the tool shows what would be shared and asks once; Enter accepts. After that,
 every complete demo session is uploaded and published automatically. The Python
-API never asks: until you decide, sessions stay on your computer. SBI sessions
-are never shared.
+API never asks: until you decide, sessions stay on your computer.
 
-- **What is shared:** the market data you recorded, local timing measurements
+- **SBI sessions share timing only:** percentiles of decode time, data age at
+  receipt and frame spacing, a stall count, the frame count, the trading date,
+  the first and last minute, and your alias and license. Never prices,
+  quantities or codes. `briskapi.Archive().timing()` lists everyone's reports.
+- **What a demo session shares:** the market data you recorded, local timing measurements
   (including your computer's clock, which shows when you recorded), and a public
   alias (random `anon-…` by default) and license. Your IP address is used only to
   rate limit uploads.

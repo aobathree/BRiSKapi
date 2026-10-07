@@ -241,11 +241,14 @@ def _default() -> Client:
     return _client
 
 
-def connect(codes=None, history=False, node='node', timeout=120):
+def connect(codes=None, history=False, node='node', timeout=120, contribute=None):
     """Experimental live SBI BRiSK feed: SBI's own WASM decoder under Node, never Chrome.
 
     Returns a briskapi.Feed (the default source for briskapi.Ticker and Market).
     The SBI live protocol has not been validated end to end; failures are explicit.
+    Market data never leaves your computer. With sharing on (briskapi.consent), a
+    timing-only summary is contributed when the session ends; contribute=False
+    keeps even that local.
     """
     from briskapi import load
     from briskapi._live import Feed
@@ -255,7 +258,7 @@ def connect(codes=None, history=False, node='node', timeout=120):
         command += ['--codes', codes if isinstance(codes, str) else ','.join(map(str, codes))]
     # Cookies travel in the environment, never on the command line (visible to other users).
     env = {**os.environ, 'BRISK_SBI_COOKIES': json.dumps(session.cookies)}
-    feed = Feed(command=command, env=env, history=history)
+    feed = Feed(command=command, env=env, history=history, contribute=contribute, timing='sbi_live')
     try:
         return load(feed.ready(timeout))
     except BaseException:

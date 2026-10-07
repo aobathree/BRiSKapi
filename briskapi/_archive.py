@@ -43,6 +43,10 @@ class Archive:
                              'contributor': m['contributor'], 'license': m['license'], 'sha256': m['sha256']})
         return Table(rows)
 
+    def timing(self, date=None) -> Table:
+        """Published timing-only reports (from SBI BRiSK sessions), optionally for one YYYYMMDD date."""
+        return Table({'key': key, **report} for key, report in cli.timing_reports(self.s3, self.config['bucket'], date))
+
     def pull(self, prefix, output=None) -> Recording:
         """Download, verify and decode one recording. Without `output`, downloads are cached."""
         if not re.fullmatch(r'archive/\d{8}/[0-9a-f]{64}', prefix):

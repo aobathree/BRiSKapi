@@ -1,6 +1,6 @@
 # Privacy policy
 
-Policy version 1, effective 7 October 2026. Applies to the `brisk` Python API and
+Policy version 2, effective 7 October 2026. Applies to the `brisk` Python API and
 CLI in this repository and the shared recording archive they contribute to.
 
 ## Automatic contribution
@@ -68,8 +68,16 @@ from your own browser. They are credentials:
   them to `~/.config/brisk/sbi-cookies.json` (or `$XDG_CONFIG_HOME/brisk/`),
   readable only by you. `sbi.logout()` deletes that file.
 - The live host receives them through its environment, not its command line.
-- SBI data and SBI sessions are never contributed to the archive, and nothing
-  about them is sent to the archive operator.
+- SBI market data (prices, quantities, codes, quotes, master data) never leaves
+  your computer.
+- With contribution on, an SBI session contributes one **timing summary** when it
+  ends (or when you close it after at least 100 frames): the p50/p90/p99/max of
+  per-frame decode time, of the feed clock's age at local receipt and of the
+  spacing between frames; the number of gaps over one second; the frame count;
+  the trading date; the first and last minute (JST) of the session; the briskapi
+  version; and your alias and license. It is published under `timing/` in the
+  public archive, permanently. `contribute=False` on `sbi.connect()` or
+  `BRISK_CONTRIBUTE=0` keeps it local.
 
 ## Network metadata
 

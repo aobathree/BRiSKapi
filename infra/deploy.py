@@ -50,9 +50,9 @@ def deploy(bucket):
         'BlockPublicAcls':True, 'IgnorePublicAcls':True, 'BlockPublicPolicy':False, 'RestrictPublicBuckets':False})
     arn = f'arn:aws:s3:::{bucket}'
     policy = {'Version':'2012-10-17', 'Statement':[
-        {'Sid':'ReadPublished', 'Effect':'Allow','Principal':'*','Action':'s3:GetObject','Resource':arn+'/archive/*'},
+        {'Sid':'ReadPublished', 'Effect':'Allow','Principal':'*','Action':'s3:GetObject','Resource':[arn+'/archive/*',arn+'/timing/*']},
         {'Sid':'ListPublished', 'Effect':'Allow','Principal':'*','Action':'s3:ListBucket','Resource':arn,
-         'Condition':{'StringLike':{'s3:prefix':['archive/','archive/*']}}},
+         'Condition':{'StringLike':{'s3:prefix':['archive/','archive/*','timing/','timing/*']}}},
         {'Sid':'TLSOnly','Effect':'Deny','Principal':'*','Action':'s3:*','Resource':[arn,arn+'/*'],
          'Condition':{'Bool':{'aws:SecureTransport':'false'}}}]}
     s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps(policy))
@@ -68,7 +68,7 @@ def deploy(bucket):
     role = ignore_exists(iam.create_role, RoleName=NAME, AssumeRolePolicyDocument=json.dumps(trust))
     role_arn = iam.get_role(RoleName=NAME)['Role']['Arn']
     iam.put_role_policy(RoleName=NAME, PolicyName=NAME, PolicyDocument=json.dumps({'Version':'2012-10-17','Statement':[
-        {'Effect':'Allow','Action':['s3:GetObject','s3:GetObjectVersion','s3:PutObject'],'Resource':[arn+'/incoming/*',arn+'/archive/*']},
+        {'Effect':'Allow','Action':['s3:GetObject','s3:GetObjectVersion','s3:PutObject'],'Resource':[arn+'/incoming/*',arn+'/archive/*',arn+'/timing/*']},
         # Staging uploads are removed once validated, rejected or superseded.
         {'Effect':'Allow','Action':['s3:DeleteObject','s3:DeleteObjectVersion'],'Resource':arn+'/incoming/*'},
         {'Effect':'Allow','Action':'dynamodb:UpdateItem','Resource':f'arn:aws:dynamodb:{REGION}:{account}:table/{NAME}'},

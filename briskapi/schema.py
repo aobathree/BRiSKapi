@@ -307,3 +307,45 @@ def repack(path, manifest, output, references=None):
         summary = validate_stream(_Tee(source, sink), references)
     require(summary == manifest['summary'], 'Summary mismatch')
     return validate_manifest({**manifest, 'sha256': digest(output), 'bytes': output.stat().st_size})
+
+# Timing reports: what an SBI session contributes instead of market data.
+TIMING_SCHEMA = 'brisk-timing-v1'
+TIMING_SOURCES = {'sbi_live'}
+TIMING_KEYS = {'schema', 'source', 'trading_date', 'first_minute', 'last_minute', 'frames', 'stalls',
+               'client_version', 'decode_ms', 'source_age_ms', 'interarrival_ms', 'contributor', 'license'}
+QUANTILES = ('p50', 'p90', 'p99', 'max')
+# Bounds per distribution (ms). Source age can be negative when local and feed clocks disagree.
+TIMING_BOUNDS = {'decode_ms': (0, 10_000), 'source_age_ms': (-600_000, 600_000), 'interarrival_ms': (0, 3_600_000)}
+MAX_TIMING_BYTES = 2048
+MIN_TIMING_FRAMES = 100
+
+def validate_timing(report, today=None):
+    """A timing report: exact fields, bounded microsecond-precision distributions, no market data.
+
+    `today` (a date) additionally requires a trading date within the last 30 days.
+    """
+    require(isinstance(report, dict) and set(report) == TIMING_KEYS, 'Invalid timing report fields')
+    require(report['schema'] == TIMING_SCHEMA and report['source'] in TIMING_SOURCES, 'Invalid timing schema/source')
+    date = report['trading_date']
+    require(isinstance(date, str) and re.fullmatch(r'\d{8}', date), 'Invalid timing date')
+    day = dt.datetime.strptime(date, '%Y%m%d').date()
+    if today is not None:
+        require(0 <= (today - day).days <= 30, 'Timing report date out of range')
+    minutes = [report['first_minute'], report['last_minute']]
+    require(all(isinstance(m, str) and re.fullmatch(r'([01]\d|2[0-3]):[0-5]\d', m) for m in minutes)
+            and minutes[0] <= minutes[1], 'Invalid session minutes')
+    frames = integer(report['frames'], 10_000_000)
+    require(frames >= MIN_TIMING_FRAMES and integer(report['stalls']) <= frames, 'Invalid frame counts')
+    require(isinstance(report['client_version'], str) and re.fullmatch(r'\d{1,4}\.\d{1,4}\.\d{1,4}', report['client_version']),
+            'Invalid client version')
+    require(isinstance(report['contributor'], str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', report['contributor']),
+            'Invalid contributor alias')
+    require(report['license'] in {'CC0-1.0', 'CC-BY-4.0'}, 'Invalid license')
+    for name, (low, high) in TIMING_BOUNDS.items():
+        values = report[name]
+        require(isinstance(values, dict) and set(values) == set(QUANTILES), f'Invalid {name}')
+        series = [values[q] for q in QUANTILES]
+        require(all(type(v) in (int, float) and low <= v <= high and round(v, 3) == v for v in series)
+                and series == sorted(series), f'Invalid {name}')
+    require(len(encode(report)) <= MAX_TIMING_BYTES, 'Timing report too large')
+    return report
