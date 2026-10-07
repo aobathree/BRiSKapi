@@ -1,4 +1,4 @@
-"""pybrisk-style Ticker and Market views over a Recording."""
+"""Ticker and Market: auction data from a recording or live feed, plus SBI BRiSK data."""
 from __future__ import annotations
 
 from briskapi._recording import NotFoundError, Recording, Table, master_view, quote_view, timestamp
@@ -9,16 +9,23 @@ def _default():
     return current()
 
 
+def _sbi(client):
+    from briskapi import sbi
+    return client or sbi._default()
+
+
 class Ticker:
     """Per-security auction data.
 
         t = Ticker("7203")
         t.info(); t.quote(); t.quote(at="09:00:00"); t.history().to_pandas()
+        t.candles("5m"); t.margin()     # SBI BRiSK session (briskapi.sbi.login)
     """
 
-    def __init__(self, code, recording: Recording | None = None):
+    def __init__(self, code, recording: Recording | None = None, sbi=None):
         self.code = str(code)
         self._recording = recording
+        self._sbi = sbi
 
     def __repr__(self):
         return f'Ticker({self.code!r})'
@@ -52,16 +59,26 @@ class Ticker:
                                         'indicative_open_price', 'market_buy_quantity', 'market_sell_quantity')} | {
             'market_order_imbalance': q['market_buy_quantity'] - q['market_sell_quantity']}
 
+    def candles(self, interval='1d') -> Table:
+        """Price bars from SBI BRiSK: 5m (today), 1d, 1w or 1mo."""
+        return _sbi(self._sbi).candles(self.code, interval)
+
+    def margin(self, days=365) -> Table:
+        """Margin balances and stock-lending fees from SBI BRiSK, one row per trading day."""
+        return _sbi(self._sbi).margin(self.code, days)
+
 
 class Market:
     """Market-wide auction data.
 
         m = Market()
         m.stocks(); m.snapshot(at="09:00:00"); m.imbalances(top=20)
+        m.turnover(); m.lists(); m.events(); m.schedule(); m.watchlist()   # SBI BRiSK session
     """
 
-    def __init__(self, recording: Recording | None = None):
+    def __init__(self, recording: Recording | None = None, sbi=None):
         self._recording = recording
+        self._sbi = sbi
 
     @property
     def recording(self) -> Recording:
@@ -97,3 +114,23 @@ class Market:
                      'batches': rec.manifest['summary']['batches'], 'contributor': rec.manifest['contributor'],
                      'license': rec.manifest['license']}
         return info
+
+    def turnover(self) -> Table:
+        """Turnover and shares outstanding for every listed stock (SBI BRiSK)."""
+        return _sbi(self._sbi).turnover()
+
+    def lists(self) -> dict[str, list[str]]:
+        """Curated stock lists such as NK225 and recent IPOs (SBI BRiSK)."""
+        return _sbi(self._sbi).lists()
+
+    def events(self, first=0, last=618) -> Table:
+        """Market events: basket orders, limit up/down, volume surges (SBI BRiSK)."""
+        return _sbi(self._sbi).events(first, last)
+
+    def schedule(self) -> dict:
+        """Trading date, session status and session times (SBI BRiSK)."""
+        return _sbi(self._sbi).schedule()
+
+    def watchlist(self) -> list[str]:
+        """Codes saved in your BRiSK watchlist (SBI BRiSK)."""
+        return _sbi(self._sbi).watchlist()

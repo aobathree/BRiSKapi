@@ -9,7 +9,7 @@ itself. For usage, see the [README](README.md).
 | --- | --- | --- |
 | Decoder hosts | `briskapi/decoder/` | Run BRiSK's own WASM decoder in Node, without a browser or Chrome DevTools. `decoder.cjs` replays the public demo, whose assets must match SHA-256 pins in `assets.json`. `sbi.cjs` drives SBI BRiSK's decoder from an authenticated session. Both emit one JSON batch per frame. |
 | Python API | `briskapi/` | `Recording` (files), `Feed` (live, background thread), `Ticker`/`Market` views and `Archive`. |
-| SBI client | `briskapi/sbi.py` | REST client derived from pybrisk (cookies, token boot, candles, margin, lists, alerts, schedule, watchlist) and `sbi.connect()` for the live host. |
+| SBI session | `briskapi/sbi.py` | Cookie login, token boot and SBI's REST data behind `Ticker.candles`/`margin` and `Market.turnover`/`lists`/`events`/`schedule`/`watchlist`; `sbi.connect()` starts the live host. |
 | Archive client | `briskapi/cli.py`, `briskapi/schema.py` | The `brisk` CLI, sharing consent, canonical packaging, upload and verified download. |
 | Auction state | `rust/brisk_quote_ingest` | Optional Rust tools: `brisk_quote_ingest` validates batches, keeps per-security state and publishes latest-state files; `brisk_recording` reconstructs a saved recording; an optional PyO3 module serves Nautilus v2. |
 | Archive service | `archive_service.py`, `infra/deploy.py` | A Lambda function URL issues upload tickets; S3-triggered ingest validates and publishes; DynamoDB holds quotas. |
@@ -72,7 +72,7 @@ are never shared.
 
 ## SBI BRiSK
 
-The REST client follows pybrisk: session cookies authenticate
+The endpoint sequence was learned from pybrisk: session cookies authenticate
 `/api/frontend/boot`, which returns a bearer token; `/api/app/boot` then gives
 the trading date, series, schedule, WebSocket URL and master/snapshot hashes.
 Requests are rate limited and never follow redirects, because a redirect means

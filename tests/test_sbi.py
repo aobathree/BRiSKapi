@@ -79,19 +79,18 @@ def test_boot_and_headers():
     assert len(opener.requests) == 2
 
 
-def test_ticker_ohlc_and_jsfc():
+def test_ticker_candles_and_margin():
     c, opener = client(**{'/api/ohlc/7203': OHLC, '/api/jsfc/7203': JSFC})
-    t = c.ticker('7203')
-    assert repr(t) == "Ticker('7203')"
-    five = t.ohlc('5m')
-    assert five == [{'date': '2026-03-11', 'index': 0, 'open': 2000, 'high': 2050, 'low': 1980, 'close': 2030,
+    t = briskapi.Ticker('7203', sbi=c)
+    five = t.candles('5m')
+    assert five == [{'date': '2026-03-11', 'bar': 0, 'open': 2000, 'high': 2050, 'low': 1980, 'close': 2030,
                      'turnover': 100000000}]
-    assert t.ohlc()[0]['close'] == 2080 and t.ohlc('1w')[0]['week'] == 10 and t.ohlc('1mo')[0]['month'] == 3
+    assert t.candles()[0]['close'] == 2080 and t.candles('1w')[0]['week'] == 10 and t.candles('1mo')[0]['month'] == 3
     assert 'date=2026-03-11' in opener.requests[2].full_url
     with pytest.raises(ValueError, match='interval'):
-        t.ohlc('1h')
-    margin = t.jsfc(count=30)
-    assert margin[0]['long_shares'] == 100000 and margin[0]['borrowing_fee'] == 0.05 and margin[0]['borrowing_fee_max'] is None
+        t.candles('1h')
+    margin = t.margin(days=30)
+    assert margin[0]['long_balance'] == 100000 and margin[0]['lending_fee'] == 0.05 and margin[0]['lending_fee_max'] is None
     assert 'count=30' in opener.requests[-1].full_url
 
 
@@ -103,12 +102,12 @@ def test_market_endpoints():
         '/api/stock_lists': {'version': '1', 'stock_lists': [{'id': 'nk225etf', 'name': 'NK225', 'issue_codes': ['1332', '7203']}]},
         '/api/markets': MARKETS,
         '/api/frontend/watchlist': {'empty': False, 'data': groups.decode()}})
-    m = c.market()
-    assert m.stocks_info() == [{'code': '7203', 'turnover': 5000000000, 'shares_outstanding': 1000000000}]
-    assert m.stock_lists() == {'nk225etf': ['1332', '7203']}
-    alert = m.alerts()[0]
-    assert alert['price'] == 2691.0 and alert['value'] == 269100000.0 and alert['code'] == '3655'
-    assert alert['time'] == dt.datetime(2026, 3, 11, 8, 0, 0, 48598, tzinfo=JST)
+    m = briskapi.Market(sbi=c)
+    assert m.turnover() == [{'code': '7203', 'turnover': 5000000000, 'shares_outstanding': 1000000000}]
+    assert m.lists() == {'nk225etf': ['1332', '7203']}
+    event = m.events()[0]
+    assert event['price'] == 2691.0 and event['value'] == 269100000.0 and event['code'] == '3655'
+    assert event['change_bps'] == 0 and event['time'] == dt.datetime(2026, 3, 11, 8, 0, 0, 48598, tzinfo=JST)
     assert 'series=0' in opener.requests[-1].full_url and 'index_to=618' in opener.requests[-1].full_url
     schedule = m.schedule()
     assert schedule['status'] == 'running' and schedule['morning_open'] == dt.datetime(2026, 3, 11, 9, tzinfo=JST)
@@ -125,7 +124,7 @@ def test_market_endpoints():
 def test_errors(status, error):
     c, _ = client(**{'/api/ohlc/7203': status})
     with pytest.raises(error):
-        c.ticker('7203').ohlc()
+        c.candles('7203')
     assert str(sbi.APIError(500)) == 'HTTP 500'
 
 
@@ -142,8 +141,8 @@ def test_session_rules(monkeypatch):
 
 
 def test_login_sources(monkeypatch, tmp_path):
-    with pytest.raises(sbi.SessionExpiredError, match='Not logged in'):
-        sbi.Ticker('7203').ohlc()
+    with pytest.raises(sbi.SessionExpiredError, match='needs a session'):
+        briskapi.Ticker('7203').candles()
     with pytest.raises(sbi.SessionExpiredError):
         sbi.login()
     monkeypatch.setenv('BRISK_SBI_COOKIES', '{"from": "env"}')
@@ -153,7 +152,9 @@ def test_login_sources(monkeypatch, tmp_path):
     path = sbi.cookies_path()
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600 and json.loads(path.read_text()) == {'saved': 'yes'}
     assert sbi.login().session.cookies == {'saved': 'yes'}
-    assert sbi.Market().client is sbi._client and sbi.Ticker('1').client is sbi._client
+    sbi._client.session._opener = Opener({'/api/frontend/boot': BOOT, '/api/app/boot': APP_BOOT})
+    sbi._client.session.rate_limit = 0
+    assert briskapi.Market().schedule()['date'] == '2026-03-11'  # default session used
     sbi.logout()
     assert not path.exists() and sbi._client is None
 

@@ -1,16 +1,18 @@
-"""SBI BRiSK (sbi.brisk.jp) client: REST data and an experimental live feed.
+"""SBI BRiSK (sbi.brisk.jp) session: login, REST data and an experimental live feed.
 
-The REST client is derived from pybrisk (https://github.com/obichan117/pybrisk),
-Copyright (c) 2026 obichan117, MIT License; see LICENSE-pybrisk.txt in this
-package. It keeps pybrisk's method and column names and follows briskapi's
-conventions: Table results, prices in yen and JST datetimes.
+The data is used through briskapi's own Ticker and Market:
 
+    import briskapi
     from briskapi import sbi
 
     sbi.login(cookies={"session_bfaf77a2": "v2.local..."})   # from your logged-in browser
-    sbi.Ticker("7203").ohlc("5m").to_pandas()
-    sbi.Market().alerts()
+    briskapi.Ticker("7203").candles("5m").to_pandas()
+    briskapi.Market().events()
     feed = sbi.connect(codes=["7203"])                      # live, via Node (experimental)
+
+The endpoint sequence (cookie login, token boot, data endpoints) was learned from
+pybrisk (https://github.com/obichan117/pybrisk), Copyright (c) 2026 obichan117,
+MIT License; see LICENSE-pybrisk.txt in this package.
 
 Your session cookies are credentials. They are sent only to sbi.brisk.jp and are
 kept in memory unless you pass remember=True. SBI data is never contributed to
@@ -38,6 +40,11 @@ SCHEDULE = {'morning_pre_open': 'morning_session_pre_open_time', 'morning_open':
             'morning_close': 'morning_session_close_time', 'afternoon_pre_open': 'afternoon_session_pre_open_time',
             'afternoon_open': 'afternoon_session_open_time', 'afternoon_pre_close': 'afternoon_session_pre_close_time',
             'afternoon_close': 'afternoon_session_close_time'}
+MARGIN = {'long_balance': 'kakuhoLongShares', 'short_balance': 'kakuhoShortShares',
+          'preliminary_long': 'sokuhoLongShares', 'preliminary_short': 'sokuhoShortShares',
+          'standardized_long': 'standardizedLongShares', 'standardized_short': 'standardizedShortShares',
+          'lending_fee': 'gyakuhibuFee', 'lending_fee_pct': 'gyakuhibuFeePercent',
+          'lending_fee_days': 'gyakuhibuFeeDayCount', 'lending_fee_max': 'gyakuhibuMaxFee'}
 
 
 class SessionExpiredError(BriskError):
@@ -127,11 +134,60 @@ class Client:
     def date(self) -> str:
         return self.boot['date']
 
-    def ticker(self, code) -> Ticker:
-        return Ticker(code, client=self)
+    def candles(self, code, interval='1d') -> Table:
+        """Price bars: 5m (today, numbered), 1d, 1w or 1mo."""
+        if interval not in INTERVALS:
+            raise ValueError(f"Invalid interval: {interval!r}. Use '5m', '1d', '1w', or '1mo'.")
+        data = self.session.get(f'/api/ohlc/{urllib.parse.quote(str(code))}', {'date': self.date})
+        key, period = {'5m': ('ohlc5min', {'date': 'date', 'bar': 'index'}), '1d': ('ohlc1day', {'date': 'date'}),
+                       '1w': ('ohlc1week', {'year': 'year', 'week': 'week'}),
+                       '1mo': ('ohlc1month', {'year': 'year', 'month': 'month'})}[interval]
+        return Table({**{name: bar[src] for name, src in period.items()}, 'open': bar['open_price'],
+                      'high': bar['high_price'], 'low': bar['low_price'], 'close': bar['close_price'],
+                      'turnover': bar['turnover']} for bar in data.get(key, []))
 
-    def market(self) -> Market:
-        return Market(client=self)
+    def margin(self, code, days=365) -> Table:
+        """Margin balances and stock-lending fees (JSFC), one row per trading day."""
+        data = self.session.get(f'/api/jsfc/{urllib.parse.quote(str(code))}', {'count': days})
+        return Table({'date': e['date'], **{name: e.get(src) for name, src in MARGIN.items()}} for e in data.values())
+
+    def turnover(self) -> Table:
+        """Turnover and shares outstanding for every listed stock."""
+        return Table({'code': i['issue_code'], 'turnover': i.get('turnover'),
+                      'shares_outstanding': i.get('calc_shares_outstanding')}
+                     for i in self.session.get('/api/stocks_info', {'date': self.date}))
+
+    def lists(self) -> dict[str, list[str]]:
+        """Curated stock lists (NK225, recent IPOs, …) by list ID."""
+        data = self.session.get('/api/stock_lists', {'date': self.date})
+        return {entry['id']: entry['issue_codes'] for entry in data['stock_lists']}
+
+    def events(self, first=0, last=618) -> Table:
+        """Market events: basket orders, limit up/down, volume surges and so on."""
+        data = self.session.get('/api/markets', {'date': self.date, 'series': self.boot['series'],
+                                                'index_from': first, 'index_to': last})
+        return Table({'index': c['index'], 'code': c.get('issue_code', ''), 'kind': c.get('kind'),
+                      'type': c.get('type', 0), 'price': _yen(c.get('price10')), 'value': _yen(c.get('value10')),
+                      'change_bps': c.get('diff_bps_from_last'), 'time': _at(self.date, c.get('time', ''))}
+                     for c in data['market_conditions'])
+
+    def schedule(self) -> dict:
+        """Trading date, session status and session times (JST datetimes)."""
+        boot = self.boot
+        info = boot['schedule_info']
+        return {'date': boot['date'], 'status': boot['session_status'],
+                **{name: _at(boot['date'], info[key]) for name, key in SCHEDULE.items()}}
+
+    def watchlist(self) -> list[str]:
+        """Codes saved in your BRiSK watchlist."""
+        data = self.session.get('/api/frontend/watchlist')
+        if data.get('empty'):
+            return []
+        content = json.loads(zlib.decompress(base64.b64decode(data['data'])))
+        if isinstance(content, dict):
+            return [item['code'] for group in content.get('groups', []) for item in group.get('items', []) if 'code' in item]
+        return [item if isinstance(item, str) else item['code'] for item in content
+                if isinstance(item, str) or (isinstance(item, dict) and 'code' in item)]
 
 
 def _yen(value10):
@@ -147,99 +203,6 @@ def _at(date, clock):
         return None
     h, m, s = clock.split(':')
     return day + dt.timedelta(hours=int(h), minutes=int(m), seconds=float(s))
-
-
-class Ticker:
-    """Per-stock SBI BRiSK data (pybrisk's Ticker)."""
-
-    def __init__(self, code, client: Client | None = None):
-        self.code = str(code)
-        self._client = client
-
-    def __repr__(self):
-        return f'Ticker({self.code!r})'
-
-    @property
-    def client(self) -> Client:
-        return self._client or _default()
-
-    def ohlc(self, interval='1d') -> Table:
-        """Candles: 5m (today, with bar index), 1d, 1w (year/week) or 1mo (year/month)."""
-        if interval not in INTERVALS:
-            raise ValueError(f"Invalid interval: {interval!r}. Use '5m', '1d', '1w', or '1mo'.")
-        client = self.client
-        data = client.session.get(f'/api/ohlc/{urllib.parse.quote(self.code)}', {'date': client.date})
-        key, period = {'5m': ('ohlc5min', ('date', 'index')), '1d': ('ohlc1day', ('date',)),
-                       '1w': ('ohlc1week', ('year', 'week')), '1mo': ('ohlc1month', ('year', 'month'))}[interval]
-        return Table({**{k: bar[k] for k in period}, 'open': bar['open_price'], 'high': bar['high_price'],
-                      'low': bar['low_price'], 'close': bar['close_price'], 'turnover': bar['turnover']}
-                     for bar in data.get(key, []))
-
-    def jsfc(self, count=365) -> Table:
-        """Margin lending and borrowing (JSFC), one row per trading day."""
-        data = self.client.session.get(f'/api/jsfc/{urllib.parse.quote(self.code)}', {'count': count})
-        fields = {'long_shares': 'kakuhoLongShares', 'short_shares': 'kakuhoShortShares',
-                  'preliminary_long': 'sokuhoLongShares', 'preliminary_short': 'sokuhoShortShares',
-                  'standardized_long': 'standardizedLongShares', 'standardized_short': 'standardizedShortShares',
-                  'borrowing_fee': 'gyakuhibuFee', 'borrowing_fee_pct': 'gyakuhibuFeePercent',
-                  'borrowing_fee_days': 'gyakuhibuFeeDayCount', 'borrowing_fee_max': 'gyakuhibuMaxFee'}
-        return Table({'date': e['date'], **{name: e.get(src) for name, src in fields.items()}} for e in data.values())
-
-
-class Market:
-    """Market-wide SBI BRiSK data (pybrisk's Market)."""
-
-    def __init__(self, client: Client | None = None):
-        self._client = client
-
-    @property
-    def client(self) -> Client:
-        return self._client or _default()
-
-    def stocks_info(self) -> Table:
-        """Turnover and shares outstanding for every listed stock."""
-        client = self.client
-        return Table({'code': i['issue_code'], 'turnover': i.get('turnover'),
-                      'shares_outstanding': i.get('calc_shares_outstanding')}
-                     for i in client.session.get('/api/stocks_info', {'date': client.date}))
-
-    def stock_lists(self) -> dict[str, list[str]]:
-        """Curated lists (NK225, recent IPOs, …) by list ID."""
-        client = self.client
-        data = client.session.get('/api/stock_lists', {'date': client.date})
-        return {entry['id']: entry['issue_codes'] for entry in data['stock_lists']}
-
-    def alerts(self, index_from=0, index_to=618) -> Table:
-        """Market condition events: basket orders, limit up/down, volume and so on."""
-        client = self.client
-        data = client.session.get('/api/markets', {'date': client.date, 'series': client.boot['series'],
-                                                  'index_from': index_from, 'index_to': index_to})
-        return Table({'index': c['index'], 'code': c.get('issue_code', ''), 'kind': c.get('kind'),
-                      'type': c.get('type', 0), 'price': _yen(c.get('price10')), 'value': _yen(c.get('value10')),
-                      'diff_bps': c.get('diff_bps_from_last'), 'time': _at(client.date, c.get('time', ''))}
-                     for c in data['market_conditions'])
-
-    def schedule(self) -> dict:
-        """Trading date, session status and session times (JST datetimes)."""
-        boot = self.client.boot
-        info = boot['schedule_info']
-        return {'date': boot['date'], 'status': boot['session_status'],
-                **{name: _at(boot['date'], info[key]) for name, key in SCHEDULE.items()}}
-
-    def watchlist(self) -> list[str]:
-        """Codes saved in your BRiSK watchlist."""
-        data = self.client.session.get('/api/frontend/watchlist')
-        if data.get('empty'):
-            return []
-        content = json.loads(zlib.decompress(base64.b64decode(data['data'])))
-        codes = []
-        if isinstance(content, dict):
-            for group in content.get('groups', []):
-                codes += [item['code'] for item in group.get('items', []) if 'code' in item]
-        elif isinstance(content, list):
-            codes = [item if isinstance(item, str) else item['code'] for item in content
-                     if isinstance(item, str) or (isinstance(item, dict) and 'code' in item)]
-        return codes
 
 
 _client: Client | None = None
@@ -274,7 +237,7 @@ def logout():
 
 def _default() -> Client:
     if _client is None:
-        raise SessionExpiredError('Not logged in: call briskapi.sbi.login(cookies={...}) first')
+        raise SessionExpiredError('SBI BRiSK data needs a session: call briskapi.sbi.login(cookies={...}) first')
     return _client
 
 

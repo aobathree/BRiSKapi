@@ -80,23 +80,23 @@ cookies: copy them from DevTools, or use `pycookiecheat`'s
 from briskapi import sbi
 
 sbi.login(cookies={"session_bfaf77a2": "v2.local..."})   # remember=True saves them (owner-only file)
-sbi.Ticker("7203").ohlc("5m").to_pandas()   # 5m, 1d, 1w or 1mo candles
-sbi.Ticker("7203").jsfc(count=30)           # margin lending (JSFC)
-market = sbi.Market()
-market.stocks_info()      # turnover and shares outstanding, all stocks
-market.stock_lists()      # NK225, recent IPOs, …
-market.alerts()           # basket orders, limit up/down, volume events
-market.schedule()         # trading date, status and session times
-market.watchlist()        # your saved codes
+toyota = briskapi.Ticker("7203")
+toyota.candles("5m").to_pandas()   # price bars: 5m (today), 1d, 1w or 1mo
+toyota.margin(days=30)             # margin balances and stock-lending fees
+market = briskapi.Market()
+market.turnover()     # turnover and shares outstanding, all stocks
+market.lists()        # NK225, recent IPOs, …
+market.events()       # basket orders, limit up/down, volume surges
+market.schedule()     # trading date, status and session times
+market.watchlist()    # your saved codes
 
-feed = sbi.connect(codes=["7203"])          # live (experimental): briskapi.Ticker/Market work on it
-briskapi.Ticker("7203").quote()
+feed = sbi.connect(codes=["7203"])          # live (experimental)
+toyota.quote()                              # same calls as any feed
 ```
 
-Method and column names follow [pybrisk](https://github.com/obichan117/pybrisk),
-which this client is derived from. Results use the conventions below. Errors are
-`sbi.SessionExpiredError` (log in again), `briskapi.NotFoundError`,
-`sbi.RateLimitError` and `sbi.APIError`. Requests are limited to one per second.
+Results use the conventions below. Errors are `sbi.SessionExpiredError` (log in
+again), `briskapi.NotFoundError`, `sbi.RateLimitError` and `sbi.APIError`.
+Requests are limited to one per second.
 
 The live feed runs SBI's own decoder under Node, downloaded with your session;
 no browser is involved. It hasn't yet been validated against a live SBI session,
@@ -121,7 +121,9 @@ archive.
 | `briskapi.recordings()` / `.pull()` / `.load()` | Archive listing, verified download, local file |
 | `briskapi.record(output, web=True, ...)` | A recording of the demo, shared per your choice |
 | `briskapi.consent(...)` | Your sharing choice |
-| `briskapi.sbi` | SBI BRiSK: see above |
+| `Ticker(code).candles(interval)` / `.margin(days)` | SBI BRiSK price bars; margin balances and lending fees |
+| `Market().turnover()` / `.lists()` / `.events()` / `.schedule()` / `.watchlist()` | SBI BRiSK market data |
+| `briskapi.sbi.login()` / `.connect()` | SBI BRiSK session and live feed |
 
 Prices are yen floats, with `None` for the vendor's zero "unavailable" value.
 Times are JST `datetime`s on the trading date. Quantities are shares; side, flag

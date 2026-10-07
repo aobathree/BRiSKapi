@@ -84,23 +84,22 @@ BRiSK を契約している SBI証券のお客様向けです。ブラウザで
 from briskapi import sbi
 
 sbi.login(cookies={"session_bfaf77a2": "v2.local..."})   # remember=True で保存（本人のみ読み取り可）
-sbi.Ticker("7203").ohlc("5m").to_pandas()   # 5分・日・週・月足（5m, 1d, 1w, 1mo）
-sbi.Ticker("7203").jsfc(count=30)           # 信用残（日証金）
-market = sbi.Market()
-market.stocks_info()      # 全銘柄の売買代金と発行済株式数
-market.stock_lists()      # 日経225、直近 IPO など
-market.alerts()           # バスケット注文、ストップ高・安、出来高などのイベント
-market.schedule()         # 取引日、状態、取引時間
-market.watchlist()        # 保存済みの銘柄コード
+toyota = briskapi.Ticker("7203")
+toyota.candles("5m").to_pandas()   # ローソク足: 5分（当日）、日、週、月（5m, 1d, 1w, 1mo）
+toyota.margin(days=30)             # 信用残と貸株料
+market = briskapi.Market()
+market.turnover()     # 全銘柄の売買代金と発行済株式数
+market.lists()        # 日経225、直近 IPO など
+market.events()       # バスケット注文、ストップ高・安、出来高急増などのイベント
+market.schedule()     # 取引日、状態、取引時間
+market.watchlist()    # 保存済みの銘柄コード
 
-feed = sbi.connect(codes=["7203"])          # ライブ（試験的）。briskapi.Ticker/Market がそのまま使えます
-briskapi.Ticker("7203").quote()
+feed = sbi.connect(codes=["7203"])          # ライブ（試験的）
+toyota.quote()                              # 他のフィードと同じ呼び出し
 ```
 
-メソッド名と列名は、このクライアントの元になった
-[pybrisk](https://github.com/obichan117/pybrisk) に合わせています。結果は下記の
-規約に従います。エラーは `sbi.SessionExpiredError`（再ログインが必要）、
-`briskapi.NotFoundError`、`sbi.RateLimitError`、`sbi.APIError` です。
+結果は下記の規約に従います。エラーは `sbi.SessionExpiredError`（再ログインが
+必要）、`briskapi.NotFoundError`、`sbi.RateLimitError`、`sbi.APIError` です。
 リクエストは1秒に1回までに制限しています。
 
 ライブフィードは、ご自身のセッションでダウンロードした SBI 自身のデコーダーを
@@ -126,7 +125,9 @@ Node 上で動かします。ブラウザは使いません。まだ実際の SB
 | `briskapi.recordings()` / `.pull()` / `.load()` | アーカイブの一覧、検証付きダウンロード、ローカルファイル |
 | `briskapi.record(output, web=True, ...)` | デモの記録（共有設定に従って共有） |
 | `briskapi.consent(...)` | 共有の設定 |
-| `briskapi.sbi` | SBI BRiSK（上記参照） |
+| `Ticker(code).candles(interval)` / `.margin(days)` | SBI BRiSK のローソク足、信用残と貸株料 |
+| `Market().turnover()` / `.lists()` / `.events()` / `.schedule()` / `.watchlist()` | SBI BRiSK の市場データ |
+| `briskapi.sbi.login()` / `.connect()` | SBI BRiSK のセッションとライブフィード |
 
 価格は円単位の浮動小数点数で、ベンダーの「値なし」（0）は `None` になります。
 時刻は取引日の日本時間の `datetime` です。数量は株数で、売買区分・フラグ・
