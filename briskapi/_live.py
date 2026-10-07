@@ -13,10 +13,10 @@ import threading
 from typing import Callable, Iterator
 import warnings
 
-import brisk_archive as cli
-from brisk._recording import BriskError, NotFoundError, Recording, Table, micros, quote_view
+from briskapi import cli
+from briskapi._recording import BriskError, NotFoundError, Recording, Table, micros, quote_view
 
-DECODER = cli.ROOT / 'tools/brisk_mock/decoder.cjs'
+DECODER = cli.DECODER
 _END = object()
 
 
@@ -59,10 +59,10 @@ def _consent(contribute, limit_frames):
     choice = cli.load_consent()
     declared = bool(choice and choice['enabled']) and limit_frames is None
     if contribute and not declared:
-        raise BriskError('contribute=True needs brisk.consent(accept=True) and a complete replay')
+        raise BriskError('contribute=True needs briskapi.consent(accept=True) and a complete replay')
     if contribute is None and choice is None:
         warnings.warn('Contribution is undecided, so this session stays local. Decide once with '
-                      '`brisk consent --accept|--revoke` or brisk.consent(accept=True|revoke=True); see PRIVACY.md.',
+                      '`brisk consent --accept|--revoke` or briskapi.consent(accept=True|revoke=True); see https://github.com/honvl/BRiSKapi/blob/main/PRIVACY.md',
                       stacklevel=3)
     upload = declared and contribute is not False and os.environ.get('BRISK_CONTRIBUTE') != '0'
     return (choice if declared else None), upload
@@ -71,11 +71,11 @@ def _consent(contribute, limit_frames):
 class Feed:
     """Live auction state, updated in a background thread as the decoder emits frames.
 
-        with brisk.connect(web=True, codes=["7203", "6758"]) as feed:
+        with briskapi.connect(web=True, codes=["7203", "6758"]) as feed:
             feed.on_quote(lambda q: print(q["code"], q["indicative_price"]))
             for q in feed.quotes("7203"):        # blocks for each update
                 ...
-            brisk.Ticker("7203").quote()         # current state, any time
+            briskapi.Ticker("7203").quote()         # current state, any time
 
     Consumers apply backpressure: a slow `quotes()` iterator or callback slows the
     feed instead of dropping updates. A complete session is contributed to the
@@ -86,8 +86,9 @@ class Feed:
     manifest = None
 
     def __init__(self, web=False, cache=None, codes=None, speed=1, limit_frames=None, contribute=None,
-                 history=False, node='node'):
-        choice, upload = _consent(contribute, limit_frames)
+                 history=False, node='node', *, command=None, env=None):
+        # `command` runs another decoder host (SBI live); such sessions are never contributed.
+        choice, upload = _consent(contribute, limit_frames) if command is None else (None, False)
         self._choice = choice if upload else None
         self._history = {} if history else None
         self._quotes: dict[int, dict] = {}
@@ -97,7 +98,8 @@ class Feed:
         self._closing = False
         self.status, self.error, self.seq, self.contribution = 'starting', None, -1, None
         self._tmp = tempfile.TemporaryDirectory() if self._choice else None
-        self._process = _decoder(web, cache, codes, speed, limit_frames, node)
+        self._process = (subprocess.Popen(command, stdout=subprocess.PIPE, env=env) if command
+                         else _decoder(web, cache, codes, speed, limit_frames, node))
         self._thread = threading.Thread(target=self._run, name='brisk-feed', daemon=True)
         self._thread.start()
 
@@ -145,7 +147,7 @@ class Feed:
     def updates(self, code, start=None, end=None) -> Iterator[dict]:
         """Raw updates received so far for one security (needs history=True)."""
         if self._history is None:
-            raise BriskError('Pass history=True to brisk.connect() to retain updates')
+            raise BriskError('Pass history=True to briskapi.connect() to retain updates')
         issue = self.issue(code)['issue_id']
         low, high = micros(self.trading_date, start), micros(self.trading_date, end)
         with self._changed:
@@ -327,10 +329,10 @@ def connect(web=False, cache=None, codes=None, speed=1, limit_frames=None, contr
 
 
 def record(output, web=False, cache=None, codes=None, speed=1, limit_frames=None, contribute=None,
-           binary=cli.BINARY) -> Recording:
+           binary=None) -> Recording:
     """Record a demo replay into `output` and contribute it according to saved consent.
 
-    contribute=None follows `brisk.consent()` (and BRISK_CONTRIBUTE=0 opts out),
+    contribute=None follows `briskapi.consent()` (and BRISK_CONTRIBUTE=0 opts out),
     False keeps the recording local, True requires saved consent. Partial replays
     (limit_frames) always stay local.
     """

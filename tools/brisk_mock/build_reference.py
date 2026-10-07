@@ -1,7 +1,7 @@
 """Fingerprint the pinned demo replay for archive validation.
 
 The output holds only truncated SHA-256 chains, never market data. Regenerate it
-only after re-auditing a changed asset pin in assets.json.
+only after re-auditing a changed asset pin in briskapi/decoder/assets.json.
 """
 from __future__ import annotations
 
@@ -13,7 +13,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from archive_schema import REFERENCE_DIR, build_reference, canonical_lines  # noqa: E402
+from briskapi.cli import DECODER  # noqa: E402
+from briskapi.schema import REFERENCE_DIR, build_reference, canonical_lines  # noqa: E402
 
 
 class LineReader:
@@ -28,7 +29,7 @@ class LineReader:
 
 def replay(cache: Path, codes: list[str] | None = None):
     """Yield canonical archive lines from an unpaced replay of the cached demo."""
-    command = ["node", str(ROOT / "tools/brisk_mock/decoder.cjs"), "--cache", str(cache), "--speed", "0"]
+    command = ["node", str(DECODER), "--cache", str(cache), "--speed", "0"]
     if codes:
         command += ["--codes", ",".join(codes)]
     with subprocess.Popen(command, stdout=subprocess.PIPE) as process:

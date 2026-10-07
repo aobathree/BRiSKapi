@@ -32,7 +32,7 @@ cargo build --release --manifest-path rust/brisk_quote_ingest/Cargo.toml
 rust/brisk_quote_ingest/target/release/brisk_quote_ingest \
   --web --latest /tmp/brisk-web-latest.json
 # Or stream decoded batches directly:
-node tools/brisk_mock/decoder.cjs --web --codes 7203,8306
+node briskapi/decoder/decoder.cjs --web --codes 7203,8306
 ```
 
 This uses the actual public demo's transport: HTTPS assets followed by locally
@@ -70,7 +70,7 @@ describes version 18000, which must not be substituted into this adapter blindly
 For immediate frame batches without Rust/file publication:
 
 ```sh
-node tools/brisk_mock/decoder.cjs --cache /tmp/brisk-mock-cache --speed 1
+node briskapi/decoder/decoder.cjs --cache /tmp/brisk-mock-cache --speed 1
 ```
 
 The Rust state is also available as the `brisk_quote_ingest::State` library for a

@@ -101,7 +101,7 @@ class BriskMockConfig:
     idle_timeout_seconds: float = 5.0
     startup_timeout_seconds: float = 30.0
     node: str = "node"
-    decoder: Path = Path(__file__).with_name("decoder.cjs")
+    decoder: Path = Path(__file__).resolve().parents[2] / "briskapi/decoder/decoder.cjs"
     actor_id: str = "BRISK-MOCK"
 
     def __post_init__(self) -> None:

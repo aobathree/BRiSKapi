@@ -1,5 +1,5 @@
 'use strict';
-const { replay } = require('./decoder.cjs');
+const { replay } = require('../../briskapi/decoder/decoder.cjs');
 const cache = process.argv[2];
 if (!cache) throw Error('Usage: node benchmark.cjs CACHE');
 const timings = [];

@@ -10,7 +10,7 @@ from urllib.request import urlopen
 
 
 def download(cache: Path) -> None:
-    manifest = json.loads(Path(__file__).with_name("assets.json").read_text())
+    manifest = json.loads((Path(__file__).resolve().parents[2] / "briskapi/decoder/assets.json").read_text())
     cache.mkdir(parents=True, exist_ok=True)
     for name, asset in manifest["assets"].items():
         dest = cache / name

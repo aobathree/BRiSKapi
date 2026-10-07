@@ -4,38 +4,42 @@
 
 BRiSK の板寄せデータを扱う、非公式の pybrisk 風 Python API と `brisk`
 コマンドラインツールです。ライブフィードの購読、記録データの任意時点での照会、
-公開アーカイブからの共有記録の取得ができます。本プロジェクトは独立したもので、
-BRiSK、立花証券、SBI証券、東京証券取引所（TSE）、日本取引所グループ（JPX）とは
-提携しておらず、承認も受けていません。
+公開アーカイブからの共有記録の取得に加え、ご自身の口座で SBI BRiSK も利用
+できます。本プロジェクトは独立したもので、BRiSK、立花証券、SBI証券、
+東京証券取引所（TSE）、日本取引所グループ（JPX）とは提携しておらず、承認も
+受けていません。
 
-> **現在利用できるデータ:** 2021年9月27日の公開 BRiSK Next デモ（寄り前の
-> スナップショット1件と寄付から3分間）を、記録時のペースで再生したものです。
-> リアルタイムの市場データではありません。リアルタイムのデータには立花証券の
-> 口座が必要で、まだ対応していません。
+> **データ源:**
+> - **口座不要:** 2021年9月27日の公開 BRiSK Next デモ（寄り前のスナップショット
+>   1件と寄付から3分間）を、記録時のペースで再生したもの。リアルタイムの市場
+>   データではありません。
+> - **SBI証券の BRiSK 契約がある場合:** SBI BRiSK の市場データ（ローソク足、
+>   信用残、アラート、取引スケジュール、ウォッチリスト）と、試験的なライブ
+>   フィード。
 
 ## インストール
 
-Python 3.12 以上、Node 22 以上、Rust 1.92 以上が必要です。
+Python 3.12 以上が必要です。ライブフィードと記録には Node 22 以上も必要です
+（BRiSK 自身のデコーダーが Node 上で動く WebAssembly モジュールのため）。
 
 ```sh
-git clone https://github.com/honvl/briskapi && cd briskapi
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[pandas]'   # `import brisk` と `brisk` コマンド
-cargo build --locked --release --manifest-path rust/brisk_quote_ingest/Cargo.toml   # `brisk record` を使う場合のみ
+pip install 'briskapi[pandas]'      # `import briskapi` と `brisk` コマンド
 ```
 
-上記のように、クローンしたリポジトリから編集可能モード（`-e`）でインストール
-してください。API はリポジトリ内のデコーダーとアーカイブ設定をそのまま使います。
-BRiSK のデコーダーとデモデータは実行時にダウンロードされ、リポジトリには含まれて
-いません。
+BRiSK のデコーダーとデモデータは実行時にダウンロードされ、パッケージには
+含まれていません。Linux、macOS、Windows 向けのビルド済み Rust ツール
+（`brisk_quote_ingest`、`brisk_recording`）は任意で、各
+[GitHub リリース](https://github.com/honvl/BRiSKapi/releases)に添付されています。
+ソースから使う場合は、リポジトリをクローンして `pip install -e '.[pandas]'` を
+実行してください。
 
 ## ライブフィード
 
 ```python
-import brisk
+import briskapi
 
-feed = brisk.connect(web=True, codes=["7203", "6758"])   # 初期状態を受信してから戻る
-toyota = brisk.Ticker("7203")
+feed = briskapi.connect(web=True, codes=["7203", "6758"])   # 初期状態を受信してから戻る
+toyota = briskapi.Ticker("7203")
 toyota.quote()        # 現在の気配（フレームが届くたびに更新）
 toyota.auction()      # 予想約定価格・数量と成行注文の売買差
 
@@ -45,14 +49,13 @@ for q in feed.quotes("7203"):       # 更新ごとに1件。セッションが�
         print("寄付:", q["last_price"], q["time"])
         break
 
-brisk.Market().imbalances(top=10).to_pandas()
-feed.wait()           # または feed.close()。`with brisk.connect(...) as feed:` も使えます
+briskapi.Market().imbalances(top=10).to_pandas()
+feed.wait()           # または feed.close()。`with briskapi.connect(...) as feed:` も使えます
 ```
 
-主なオプション: `web=True`（デモサイトから取得）または `cache=DIR`
-（`python tools/brisk_mock/download_mock.py --cache DIR` で事前にダウンロード
-したデータ）、`codes`（銘柄コード）、`speed`（`1` で実時間、`0` で最速）、
-`history=True`（`Ticker.history()` のために更新を保持）。コールバックと
+主なオプション: `web=True`（デモサイトから取得）または `cache=DIR`（デモ
+データのローカルコピー）、`codes`（銘柄コード）、`speed`（`1` で実時間、`0` で
+最速）、`history=True`（`Ticker.history()` のために更新を保持）。コールバックと
 イテレーターは、まず各銘柄の現在の気配を受け取り、その後すべての更新を順番
 どおりに受け取ります。受け取る側の処理が遅い場合、更新を捨てずにフィードの
 ほうが待ちます。
@@ -60,20 +63,57 @@ feed.wait()           # または feed.close()。`with brisk.connect(...) as fee
 ## 記録データとアーカイブ
 
 ```python
-brisk.recordings(source="historical_mock")   # 公開済みの記録一覧（AWS アカウント不要）
-brisk.pull("archive/20210927/SHA256")       # ダウンロード・検証・展開・キャッシュし、既定のデータにする
-brisk.load("recordings/my-session")         # ローカルの記録（events.jsonl[.gz] またはフォルダー）
+briskapi.recordings(source="historical_mock")   # 公開済みの記録一覧（AWS アカウント不要）
+briskapi.pull("archive/20210927/SHA256")       # ダウンロード・検証・展開・キャッシュし、既定のデータにする
+briskapi.load("recordings/my-session")         # ローカルの記録（events.jsonl[.gz] またはフォルダー）
+briskapi.record("recordings/my-session", web=True)   # デモを自分で記録
 
-brisk.Ticker("7203").quote(at="08:59:59.99")               # 任意の日本時間時点の状態
-brisk.Ticker("7203").history(start="09:00", end="09:01")   # 期間内のすべての更新
-brisk.Market().snapshot(at="09:00:00").to_pandas()
+briskapi.Ticker("7203").quote(at="08:59:59.99")               # 任意の日本時間時点の状態
+briskapi.Ticker("7203").history(start="09:00", end="09:01")   # 期間内のすべての更新
+briskapi.Market().snapshot(at="09:00:00").to_pandas()
 ```
+
+## SBI BRiSK
+
+BRiSK を契約している SBI証券のお客様向けです。ブラウザで
+[sbi.brisk.jp](https://sbi.brisk.jp) にログインし、そのセッション Cookie を
+渡します。Cookie は DevTools からコピーするか、`pycookiecheat` の
+`chrome_cookies("https://sbi.brisk.jp")` で取得できます。
+
+```python
+from briskapi import sbi
+
+sbi.login(cookies={"session_bfaf77a2": "v2.local..."})   # remember=True で保存（本人のみ読み取り可）
+sbi.Ticker("7203").ohlc("5m").to_pandas()   # 5分・日・週・月足（5m, 1d, 1w, 1mo）
+sbi.Ticker("7203").jsfc(count=30)           # 信用残（日証金）
+market = sbi.Market()
+market.stocks_info()      # 全銘柄の売買代金と発行済株式数
+market.stock_lists()      # 日経225、直近 IPO など
+market.alerts()           # バスケット注文、ストップ高・安、出来高などのイベント
+market.schedule()         # 取引日、状態、取引時間
+market.watchlist()        # 保存済みの銘柄コード
+
+feed = sbi.connect(codes=["7203"])          # ライブ（試験的）。briskapi.Ticker/Market がそのまま使えます
+briskapi.Ticker("7203").quote()
+```
+
+メソッド名と列名は、このクライアントの元になった
+[pybrisk](https://github.com/obichan117/pybrisk) に合わせています。結果は下記の
+規約に従います。エラーは `sbi.SessionExpiredError`（再ログインが必要）、
+`briskapi.NotFoundError`、`sbi.RateLimitError`、`sbi.APIError` です。
+リクエストは1秒に1回までに制限しています。
+
+ライブフィードは、ご自身のセッションでダウンロードした SBI 自身のデコーダーを
+Node 上で動かします。ブラウザは使いません。まだ実際の SBI セッションでは
+検証できていないため、推測で動かさず、問題があれば明示的なエラーで止まり
+ます。結果をぜひお知らせください。Cookie は sbi.brisk.jp にのみ送られ、SBI の
+データがアーカイブに共有されることはありません。
 
 ## API リファレンス
 
 | 呼び出し | 戻り値 |
 | --- | --- |
-| `brisk.connect(...)` | ライブの `Feed`（既定のデータ源になる） |
+| `briskapi.connect(...)` | ライブの `Feed`（既定のデータ源になる） |
 | `Ticker(code).info()` | 銘柄名、売買単位、呼値の種別、基準値、値幅制限 |
 | `Ticker(code).quote(at=None)` | 買い・売り気配、予想約定価格・数量、成行・引け条件付きの数量、直近の約定 |
 | `Ticker(code).auction(at=None)` | 板寄せの予想状態と `market_order_imbalance`（成行の買い数量 − 売り数量） |
@@ -83,22 +123,24 @@ brisk.Market().snapshot(at="09:00:00").to_pandas()
 | `Market().imbalances(at=None, top=None)` | 成行注文の売買差（絶対値）が大きい順の銘柄 |
 | `Market().summary()` | データ源、日付、銘柄数、時刻の範囲 |
 | `Feed.quotes(codes)` / `Feed.on_quote(fn, codes)` | 届いた順のライブ更新 |
-| `brisk.recordings()` / `brisk.pull()` / `brisk.load()` | アーカイブの一覧、検証付きダウンロード、ローカルファイル |
-| `brisk.record(output, web=True, ...)` | Rust レコーダーによる記録（共有設定に従って共有） |
-| `brisk.consent(...)` | 共有の設定 |
+| `briskapi.recordings()` / `.pull()` / `.load()` | アーカイブの一覧、検証付きダウンロード、ローカルファイル |
+| `briskapi.record(output, web=True, ...)` | デモの記録（共有設定に従って共有） |
+| `briskapi.consent(...)` | 共有の設定 |
+| `briskapi.sbi` | SBI BRiSK（上記参照） |
 
 価格は円単位の浮動小数点数で、ベンダーの「値なし」（0）は `None` になります。
 時刻は取引日の日本時間の `datetime` です。数量は株数で、売買区分・フラグ・
 ステータスはベンダーの値のままです。`raw=True` を指定すると、ベンダー形式
 （`*_price10` は0.1円単位、`*_us` は日本時間0時からのマイクロ秒）で返します。
 表形式の結果は dict のリストで、`.to_pandas()` で DataFrame に変換できます。
-エラーは `brisk.BriskError` と `brisk.NotFoundError` です。市場全体の照会では
-記録を1回読み込みます（デモ全体の 420 MB で約6秒）。
+エラーは `briskapi.BriskError` と `briskapi.NotFoundError` です。市場全体の照会
+では記録を1回読み込みます（デモ全体の 420 MB で約6秒）。
 
 ## コマンドライン
 
 ```sh
 brisk live --web --codes 7203,6758          # 気配の更新ごとに JSON を1行出力（--raw でベンダー形式）
+brisk live --sbi --codes 7203               # SBI BRiSK。Cookie は BRISK_SBI_COOKIES（JSON）から
 brisk record --web --output recordings/s1   # デモを記録（同意済みなら共有）
 brisk list --date 20210927 --source historical_mock
 brisk pull archive/20210927/SHA256 --output recordings/downloaded
@@ -111,11 +153,11 @@ brisk upload recordings/s1                  # 記録の共有を再試行
 
 ## 記録の共有
 
-コマンドラインで初めて記録またはライブセッションを始めると、共有される内容が
-表示され、一度だけ確認されます（Enter で同意）。それ以降は、最後まで正常に
-終わったセッションが自動的にアップロードされ、公開されます。Python API から
-確認を求めることはありません。決めるまでは、セッションはお使いのコンピューター
-にだけ保存されます。
+コマンドラインで初めてデモの記録またはライブセッションを始めると、共有される
+内容が表示され、一度だけ確認されます（Enter で同意）。それ以降は、最後まで
+正常に終わったデモのセッションが自動的にアップロードされ、公開されます。
+Python API から確認を求めることはありません。決めるまでは、セッションは
+お使いのコンピューターにだけ保存されます。SBI のセッションは共有されません。
 
 - **共有される内容:** 記録した市場データ、ローカルの計測値（お使いの
   コンピューターの時計を含み、記録した日時がわかります）、公開エイリアス
@@ -135,10 +177,10 @@ brisk upload recordings/s1                  # 記録の共有を再試行
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): 仕組み、データ形式、アーカイブの改ざん対策と制限
 - [PRIVACY.md](PRIVACY.md): プライバシーポリシー
-- [CONTRIBUTING.md](CONTRIBUTING.md): 開発とテスト
+- [CONTRIBUTING.md](CONTRIBUTING.md): 開発、テスト、リリース
 - [tools/brisk_mock/README.md](tools/brisk_mock/README.md): Rust コレクター、フィールド定義、タイミングとレイテンシー
 - [tools/brisk_mock/NAUTILUS_V2.md](tools/brisk_mock/NAUTILUS_V2.md): NautilusTrader v2 との連携
 - [infra/README.md](infra/README.md): 独自アーカイブのデプロイ
-- [THIRD_PARTY.md](THIRD_PARTY.md): デコーダーとデータの権利
+- [THIRD_PARTY.md](THIRD_PARTY.md): デコーダー、データ、pybrisk の権利表示
 
 ソフトウェアは MIT ライセンスです。

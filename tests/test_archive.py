@@ -10,9 +10,9 @@ import uuid
 import pytest
 from botocore.exceptions import ClientError
 
-import archive_schema as schema
+import briskapi.schema as schema
 import archive_service as service
-import brisk_archive as cli
+import briskapi.cli as cli
 
 
 def batches(source='synthetic_test'):
@@ -441,8 +441,12 @@ def harness(tmp_path, monkeypatch):
     uploads = []
     monkeypatch.setattr(cli, 'contribute', lambda *a, **k: uploads.append(a) or {'status': 'published'})
     monkeypatch.setattr(cli, 'client', lambda *a: None)
-    def run(cmd, check):
-        Path(cmd[cmd.index('--events') + 1]).write_bytes(raw(batches()))
+    def run(cmd, check, stdout=None):
+        # Node decoder writes to stdout; the optional Rust collector writes --events.
+        if stdout:
+            stdout.write(raw(batches()))
+        else:
+            Path(cmd[cmd.index('--events') + 1]).write_bytes(raw(batches()))
     monkeypatch.setattr(cli.subprocess, 'run', run)
     (tmp_path / 'source.jsonl').write_bytes(raw(batches()))
     def main(*args):
@@ -524,6 +528,34 @@ def test_consent_controls(tmp_path, monkeypatch, harness, capsys):
 
 def test_record_events_command(monkeypatch, tmp_path):
     calls = []
-    monkeypatch.setattr(cli.subprocess, 'run', lambda cmd, check: calls.append(cmd))
+    monkeypatch.setattr(cli.subprocess, 'run', lambda cmd, check, stdout=None: calls.append((cmd, stdout)))
     cli.record_events(tmp_path / 'e.jsonl', cache=tmp_path, codes=['7203', '6758'], limit_frames=5, speed=0)
-    assert calls[0][calls[0].index('--codes') + 1] == '7203,6758' and '--limit-frames' in calls[0] and '--cache' in calls[0]
+    cmd, stdout = calls[0]
+    assert cmd[:2] == ['node', str(cli.DECODER)] and stdout is not None and cli.DECODER.exists()
+    assert cmd[cmd.index('--codes') + 1] == '7203,6758' and '--limit-frames' in cmd and '--cache' in cmd
+    cli.record_events(tmp_path / 'r.jsonl', web=True, binary=tmp_path / 'collector')
+    cmd, stdout = calls[1]
+    assert cmd[0] == str(tmp_path / 'collector') and cmd[cmd.index('--decoder') + 1] == str(cli.DECODER)
+    assert '--web' in cmd and stdout is None
+
+
+def test_lambda_package_is_self_contained(tmp_path):
+    """The deployed zip imports the service and loads references without the client API."""
+    import importlib.util
+    import os
+    import subprocess
+    import sys
+    import zipfile
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location('deploy', root / 'infra/deploy.py')
+    deploy = importlib.util.module_from_spec(spec); spec.loader.exec_module(deploy)
+    with zipfile.ZipFile(io.BytesIO(deploy.package())) as z:
+        assert sorted(z.namelist()) == ['archive_service.py', 'briskapi/__init__.py',
+                                        'briskapi/references/historical_mock.json', 'briskapi/schema.py']
+        z.extractall(tmp_path)
+    check = ("import archive_service, briskapi, briskapi.schema as s, sys; "
+             f"assert briskapi.__file__.startswith({str(tmp_path)!r}); "
+             "assert sorted(s.REFERENCES) == ['historical_mock', 'synthetic_test']; "
+             "assert 'briskapi.cli' not in sys.modules")
+    subprocess.run([sys.executable, '-c', check], cwd=tmp_path, check=True,
+                   env={'PYTHONPATH': str(tmp_path), 'PATH': os.environ.get('PATH', '')})

@@ -8,8 +8,8 @@ CLI in this repository and the shared recording archive they contribute to.
 Sessions are contributed automatically. The first time you record, package or
 open a live session from the command line, the tool shows a short notice and asks
 once. Pressing Enter accepts, and the choice is saved for future runs. After that,
-every clean and complete session (`brisk record`, `brisk live`, `brisk.connect()`,
-`brisk.record()`) is uploaded and published without further prompts. A live
+every clean and complete demo session (`brisk record`, `brisk live`, `briskapi.connect()`,
+`briskapi.record()`) is uploaded and published without further prompts. A live
 session is written to a temporary file while it runs; the file is deleted after
 the upload. Python API calls never prompt.
 
@@ -23,7 +23,7 @@ the end always stay local.
 Opting out:
 
 - decline at the first prompt;
-- `brisk consent --revoke` (or `brisk.consent(revoke=True)`) turns contribution off
+- `brisk consent --revoke` (or `briskapi.consent(revoke=True)`) turns contribution off
   until you turn it back on with `brisk consent --accept`;
 - `BRISK_CONTRIBUTE=0` disables uploads for any process with that environment;
 - `--no-upload` skips one run.
@@ -57,6 +57,20 @@ orders, usernames, hostnames, file paths, environment variables or hardware
 identifiers. The archive service accepts only the fields listed above and rejects
 any recording that contains other fields, so a modified client cannot add them.
 
+## SBI BRiSK
+
+The SBI BRiSK client (`briskapi.sbi`, `brisk live --sbi`) uses session cookies
+from your own browser. They are credentials:
+
+- They are sent only to `https://sbi.brisk.jp`, together with the API token it
+  issues. The client never follows redirects, so they can't be forwarded elsewhere.
+- They stay in memory unless you call `sbi.login(..., remember=True)`, which saves
+  them to `~/.config/brisk/sbi-cookies.json` (or `$XDG_CONFIG_HOME/brisk/`),
+  readable only by you. `sbi.logout()` deletes that file.
+- The live host receives them through its environment, not its command line.
+- SBI data and SBI sessions are never contributed to the archive, and nothing
+  about them is sent to the archive operator.
+
 ## Network metadata
 
 Contributing contacts an AWS Lambda function URL and Amazon S3 in Tokyo
@@ -85,7 +99,7 @@ nothing about you to the archive operator beyond the IP address that S3 sees.
   status) in staging expires after two days. Rejected uploads are never published.
 - On your computer, the tool stores your choice, alias and license in
   `~/.config/brisk/contribution.json` (or `$XDG_CONFIG_HOME/brisk/`).
-  `brisk.pull()` caches verified downloads in `~/.cache/brisk/` (or
+  `briskapi.pull()` caches verified downloads in `~/.cache/brisk/` (or
   `$XDG_CACHE_HOME/brisk/`). Delete these files at any time.
 
 ## Data licensing

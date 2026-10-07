@@ -8,7 +8,7 @@ import sys
 import pytest
 
 sys.path[:0] = [str(Path(__file__).resolve().parents[2]), str(Path(__file__).parent)]
-import archive_schema as schema  # noqa: E402
+import briskapi.schema as schema  # noqa: E402
 from build_reference import LineReader, replay  # noqa: E402
 
 CACHE = os.environ.get("BRISK_MOCK_CACHE")

@@ -9,8 +9,6 @@ const { setTimeout: delay } = require('node:timers/promises');
 const manifest = require('./assets.json');
 const { verifyAsset, loadWebAssets } = require('./web.cjs');
 const BUFFER = 4 * 1024 * 1024;
-const OHLC = manifest.ohlc_length;
-const VIEW_WORDS = 37 + 6 * OHLC;
 
 function u64(words, i) {
   const value = words[i] + 4294967296 * words[i + 1];
@@ -55,7 +53,8 @@ function loadAssets(cache) {
 }
 
 class Decoder {
-  static async create(assets) {
+  // options.protocolVersion: 16000 for the Next demo (default), 18000 for SBI BRiSK.
+  static async create(assets, options = {}) {
     // Isolate the legacy glue's globals and process exception handlers. No UI,
     // network, filesystem access or account state is needed inside this VM.
     const context = vm.createContext({
@@ -69,17 +68,18 @@ class Decoder {
         print() {}, printErr() {}, onAbort: reject,
       }).then(wasm => resolve({ wasm }));
     });
-    return new Decoder(wasm, assets);
+    options.check?.(wasm);
+    return new Decoder(wasm, assets, options);
   }
 
-  constructor(w, assets) {
+  constructor(w, assets, { protocolVersion = manifest.protocol_version } = {}) {
     this.w = w;
     this.authError = false;
     this.initialFrames = null;
     const add = (fn, sig = 'viii') => w.addFunction(fn, sig);
     this.id = w._initialize(add(() => {}), add((id, p, count) => {
       this.initialFrames = Array.from(new Uint32Array(w.HEAPU8.buffer, p, count));
-    }), add(() => {}), add(() => {}), add(() => { this.authError = true; }), add(() => {}), manifest.protocol_version);
+    }), add(() => {}), add(() => {}), add(() => { this.authError = true; }), add(() => {}), protocolVersion);
     this.buf = w._malloc(BUFFER);
     this.aux = w._malloc(64);
     this.push(assets['master.dat']);
@@ -96,7 +96,6 @@ class Decoder {
     });
     this.unserialize(assets['snapshot.dat']);
     this.date = String(w._getDate(this.id));
-    if (this.date !== manifest.trading_date.replaceAll('-', '')) throw new Error('Unexpected mock trading date');
   }
 
   push(data) {
@@ -124,6 +123,17 @@ class Decoder {
     if (size) flush();
   }
 
+  // Bars of OHLC history ahead of the quote fields in a stock view. SBI's build
+  // reports it once its stream is initialized; the demo's comes from the manifest.
+  get ohlc() {
+    this._ohlc ??= typeof this.w._ohlcLength === 'function' ? this.w._ohlcLength(this.id) : manifest.ohlc_length;
+    return this._ohlc;
+  }
+
+  get viewWords() {
+    return 37 + 6 * this.ohlc;
+  }
+
   time() {
     this.w._getTime(this.id, this.aux);
     return u64(new Uint32Array(this.w.HEAPU8.buffer, this.aux, 2), 0);
@@ -137,14 +147,18 @@ class Decoder {
     if (this.authError) throw new Error('Decoder rejected session');
   }
 
-  start(firstFrame) {
-    this.feed(firstFrame);
-    if (!this.initialFrames || this.initialFrames.length !== this.master.length) throw new Error('Missing frame-number bootstrap');
+  // Feed one frame; true once the decoder has reported its initial frame numbers
+  // and quote tracing has started (the demo's first frame always does this).
+  start(frame) {
+    this.feed(frame);
+    if (!this.initialFrames) return false;
+    if (this.initialFrames.length !== this.master.length) throw new Error('Missing frame-number bootstrap');
     this.w._getFrameNumbers(this.id, this.buf, this.master.length);
     const current = new Uint32Array(this.w.HEAPU8.buffer, this.buf, this.master.length);
     if (this.initialFrames.some((n, i) => current[i] < n)) throw new Error('Snapshot needs unavailable catch-up data');
     this.w._apiRecieved(this.id);
     this.trace = this.w._addTraceUpdate(this.id);
+    return true;
   }
 
   changed() {
@@ -160,8 +174,8 @@ class Decoder {
     const m = this.master[issue_id];
     if (!m) throw new Error(`Unknown issue ID: ${issue_id}`);
     if (!this.w._getStockView(this.id, issue_id, this.buf)) throw new Error(`Stock view unavailable: ${m.code}`);
-    const words = new Uint32Array(this.w.HEAPU8.buffer, this.buf, VIEW_WORDS);
-    const a = words.subarray(6 * OHLC);
+    const words = new Uint32Array(this.w.HEAPU8.buffer, this.buf, this.viewWords);
+    const a = words.subarray(6 * this.ohlc);
     const quote = { issue_id, code: m.code, frame: a[19], max_frame: a[20],
       source_time_us: u64(a, 17), last_price10: words[1], open_price10: words[2],
       bid_price10: a[7], ask_price10: a[8], indicative_price10: a[9],
@@ -170,9 +184,11 @@ class Decoder {
       quote_flag: a[21], quote_side: a[22], special_quote_time_us: u64(a, 23),
       indicative_open_price10: a[32], auction_reference_price10: a[35],
       volume: u64(a, 3) };
-    if (!this.w._getPortfolio(this.id, Number(m.code), this.buf)) throw new Error(`Portfolio unavailable: ${m.code}`);
-    const portfolio = new Uint32Array(this.w.HEAPU8.buffer, this.buf, 22 + OHLC);
-    quote.issue_status = portfolio[OHLC + 15];
+    // SBI's build has no portfolio export, so its quotes carry no issue_status.
+    if (this.w._getPortfolio) {
+      if (!this.w._getPortfolio(this.id, Number(m.code), this.buf)) throw new Error(`Portfolio unavailable: ${m.code}`);
+      quote.issue_status = new Uint32Array(this.w.HEAPU8.buffer, this.buf, 22 + this.ohlc)[this.ohlc + 15];
+    }
     // Request one price row solely to obtain the market/over/under rows in the
     // documented ABI. Row 0 is market orders, not the top-of-book depth.
     const price = quote.indicative_price10 || quote.bid_price10 || quote.ask_price10 || m.base_price10;
@@ -195,6 +211,7 @@ async function replay({ cache, web = false, codes = [], speed = 1, limitFrames =
   const { assets, input_transport } = web ? await loadWebAssets()
     : { assets: loadAssets(cache), input_transport: { kind: 'local_cache' } };
   const decoder = await Decoder.create(assets);
+  if (decoder.date !== manifest.trading_date.replaceAll('-', '')) throw new Error('Unexpected mock trading date');
   const selected = new Set(codes);
   const master = decoder.master.filter(m => !selected.size || selected.has(m.code));
   const missing = codes.filter(code => !master.some(m => m.code === code));
@@ -203,7 +220,7 @@ async function replay({ cache, web = false, codes = [], speed = 1, limitFrames =
   const iter = frames(assets['ws.dat']);
   const first = iter.next().value;
   if (!first) throw new Error('Empty mock recording');
-  decoder.start(first.data);
+  if (!decoder.start(first.data)) throw new Error('Missing frame-number bootstrap');
   let seq = 0;
   await emit({ type: 'bootstrap', seq: seq++, source: 'historical_mock', trading_date: decoder.date, input_transport,
     source_timestamp_origin: 'brisk_decoder_unverified', exchange_delay_ms: null,

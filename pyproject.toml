@@ -14,11 +14,16 @@ dependencies = ["boto3>=1.41,<2"]
 [project.optional-dependencies]
 pandas = ["pandas>=2"]
 
-[project.scripts]
-brisk = "brisk_archive:main"
+[project.urls]
+Source = "https://github.com/honvl/BRiSKapi"
 
-# Install editable from a checkout: the CLI uses the repository's archive.json,
-# reference fingerprints, Node decoder and Rust recorder in place.
+[project.scripts]
+brisk = "briskapi.cli:main"
+
+# Self-contained: the archive settings, reference fingerprints, Node decoder
+# hosts and asset pins ship inside the package. Vendor assets never do.
 [tool.setuptools]
-py-modules = ["archive_schema", "brisk_archive"]
-packages = ["brisk"]
+packages = ["briskapi"]
+
+[tool.setuptools.package-data]
+briskapi = ["archive.json", "references/*.json", "decoder/*.cjs", "decoder/assets.json", "LICENSE-pybrisk.txt"]

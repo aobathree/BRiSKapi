@@ -11,7 +11,7 @@ With operator AWS credentials, provision a **new dedicated** installation:
 .venv/bin/python infra/deploy.py --bucket YOUR_UNIQUE_TOKYO_BUCKET
 ```
 
-This updates `archive.json`. Deployment is repeatable and updates Lambda code.
+This updates `briskapi/archive.json`. Deployment is repeatable and updates Lambda code.
 Resource names are `brisk-recorder-archive` (the project's former name; renaming them
 would create a second deployment). Use a separate AWS account or change
 `NAME` for a second installation. The deployer needs S3, Lambda, IAM role/policy,
@@ -25,8 +25,10 @@ particular key and exact size. Public bucket policy permits only TLS reads of
 enabled. Logs expire after 14 days.
 
 Ingest accepts only canonical recordings that match a reference replay and
-publishes its own gzip of the validated content (see the README's integrity
-section). The deployment package includes `references/*.json`. The function has
+publishes its own gzip of the validated content (see the integrity section of
+[ARCHITECTURE.md](../ARCHITECTURE.md)). The deployment package holds
+`archive_service.py`, `briskapi/schema.py` and `briskapi/references/*.json`,
+with an empty package init so the client API stays out of it. The function has
 1,769 MB (one vCPU) because validating and recompressing a complete 420 MB replay
 takes about a minute. Each validated staging upload, and any extra upload made
 with an already-used ticket, is deleted on arrival. The deployer creates a random

@@ -7,10 +7,10 @@ import sys
 
 import pytest
 
-import archive_schema as schema
-import brisk
-import brisk_archive as cli
-from brisk import _archive, _live, _recording
+import briskapi as brisk
+import briskapi.cli as cli
+import briskapi.schema as schema
+from briskapi import _archive, _live, _recording
 
 TOYOTA = {'issue_id': 1, 'code': '7203', 'tick_type': 3, 'base_price10': 101000, 'limit_up10': 131000,
           'limit_down10': 71000, 'lot_size': 100, 'issue_type': 111, 'name': 'Toyota'}
@@ -247,8 +247,8 @@ def test_record_follows_consent(recorder, tmp_path, monkeypatch):
 
 def test_module_entry_point(monkeypatch, capsys):
     monkeypatch.setattr(sys, 'argv', ['brisk', 'consent'])
-    sys.modules.pop('brisk.__main__', None)
-    import brisk.__main__  # noqa: F401
+    sys.modules.pop('briskapi.__main__', None)
+    import briskapi.__main__  # noqa: F401
     assert json.loads(capsys.readouterr().out)['enabled'] is None
 
 

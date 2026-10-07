@@ -13,7 +13,7 @@ MAIN = "https://next-demo.brisk.jp/main.e7eddef108d814fc1852.js"
 
 
 def verify(cache: Path) -> None:
-    command = ["node", str(Path(__file__).with_name("decoder.cjs")), "--cache", str(cache),
+    command = ["node", str(Path(__file__).resolve().parents[2] / "briskapi/decoder/decoder.cjs"), "--cache", str(cache),
                "--codes", ",".join(CODES), "--speed", "0", "--limit-frames", "1"]
     baseline = json.loads(subprocess.check_output(command, text=True).splitlines()[0])
     with sync_playwright() as p:

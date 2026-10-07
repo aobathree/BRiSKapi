@@ -13,7 +13,7 @@ import zlib
 
 import boto3
 from botocore.exceptions import ClientError
-from archive_schema import repack, validate_manifest, require, MAX_COMPRESSED
+from briskapi.schema import repack, validate_manifest, require, MAX_COMPRESSED
 
 BUCKET = os.environ.get('ARCHIVE_BUCKET', '')
 TABLE = os.environ.get('QUOTA_TABLE', '')

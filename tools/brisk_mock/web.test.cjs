@@ -3,9 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { fetchAsset, loadWebAssets, MAX_ASSET_BYTES } = require('./web.cjs');
-const { main, replay } = require('./decoder.cjs');
-const manifest = require('./assets.json');
+const { fetchAsset, loadWebAssets, MAX_ASSET_BYTES } = require('../../briskapi/decoder/web.cjs');
+const { main, replay } = require('../../briskapi/decoder/decoder.cjs');
+const manifest = require('../../briskapi/decoder/assets.json');
 const cache = process.env.BRISK_MOCK_CACHE;
 
 test('web transport rejects HTTP failures, empty bodies and changed assets', async () => {

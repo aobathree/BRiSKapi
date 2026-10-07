@@ -1,0 +1,103 @@
+name: Release
+# A v* tag builds and tests everything, publishes the Python package to PyPI
+# (trusted publishing, `pypi` environment) and creates a GitHub Release with
+# prebuilt Rust tools. Run it manually for a dry run that publishes nothing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tag must match the package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME does not match version $version"; exit 1; }
+      - run: python -m pip install build -r requirements-dev.txt -e .
+      - run: python -m pytest tests -q
+      - run: python -m build
+      - name: Installed wheel works outside the repository
+        working-directory: /tmp
+        run: |
+          python -m venv /tmp/wheel-venv
+          /tmp/wheel-venv/bin/python -m pip install "$GITHUB_WORKSPACE"/dist/briskapi-*.whl
+          /tmp/wheel-venv/bin/brisk --help > /dev/null
+          /tmp/wheel-venv/bin/python -I -c "import briskapi.cli as c, briskapi.sbi as s; assert c.DECODER.exists() and s.DECODER.exists()"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/
+
+  rust:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked --release --manifest-path rust/brisk_quote_ingest/Cargo.toml
+      - name: Package the tools with their decoder host
+        shell: bash
+        run: |
+          name="brisk-tools-${GITHUB_REF_NAME//\//-}-${{ matrix.target }}"
+          ext=""; [ "$RUNNER_OS" = Windows ] && ext=".exe"
+          mkdir -p "$name/decoder"
+          cp rust/brisk_quote_ingest/target/release/brisk_quote_ingest$ext rust/brisk_quote_ingest/target/release/brisk_recording$ext "$name/"
+          # brisk_quote_ingest finds decoder/decoder.cjs next to itself; Node 22+ runs it.
+          cp briskapi/decoder/decoder.cjs briskapi/decoder/web.cjs briskapi/decoder/assets.json "$name/decoder/"
+          cp LICENSE THIRD_PARTY.md "$name/"
+          if [ "$RUNNER_OS" = Windows ]; then 7z a "$name.zip" "$name" > /dev/null; else tar czf "$name.tar.gz" "$name"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-${{ matrix.target }}
+          path: |
+            brisk-tools-*.tar.gz
+            brisk-tools-*.zip
+
+  github-release:
+    needs: [python, rust]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - run: cd artifacts && sha256sum * > SHA256SUMS
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+  pypi:
+    needs: [python, rust]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

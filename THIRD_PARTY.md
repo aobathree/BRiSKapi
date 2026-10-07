@@ -6,8 +6,11 @@ and historical market data. Those files are fetched at runtime, are not included
 here and are not covered by this repository's MIT software license.
 Recording redistribution depends on the applicable data/provider permissions.
 
-Protocol research references https://github.com/obichan117/pybrisk, and the
-Python API follows its `Ticker`/`Market` style; no source files, vendor bundles
-or raw captures from that repository are bundled here.
+The SBI BRiSK client (`briskapi/sbi.py`) is derived from pybrisk
+(https://github.com/obichan117/pybrisk), Copyright (c) 2026 obichan117, MIT
+License; its notice ships as `briskapi/LICENSE-pybrisk.txt`. The Python API
+follows pybrisk's `Ticker`/`Market` style. No vendor bundles or raw captures from
+that repository are bundled here. SBI BRiSK's decoder is downloaded at runtime
+with the user's own session and is never stored or redistributed by this project.
 Dependencies retain their own licenses. Cargo.lock records Rust dependencies;
 boto3 uses Apache-2.0. NautilusTrader is an optional separately installed runtime.

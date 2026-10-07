@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 import re
 
-import brisk_archive as cli
-from brisk._recording import Recording, Table
+from briskapi import cli
+from briskapi._recording import Recording, Table
 
 
 def cache_dir() -> Path:

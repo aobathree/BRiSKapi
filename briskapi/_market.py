@@ -1,11 +1,11 @@
 """pybrisk-style Ticker and Market views over a Recording."""
 from __future__ import annotations
 
-from brisk._recording import NotFoundError, Recording, Table, master_view, quote_view, timestamp
+from briskapi._recording import NotFoundError, Recording, Table, master_view, quote_view, timestamp
 
 
 def _default():
-    from brisk import current
+    from briskapi import current
     return current()
 
 

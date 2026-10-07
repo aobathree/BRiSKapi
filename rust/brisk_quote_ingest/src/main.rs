@@ -23,8 +23,10 @@ struct Args {
     web: bool,
     #[arg(long, default_value = "node")]
     node: String,
-    #[arg(long, default_value = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tools/brisk_mock/decoder.cjs"))]
-    decoder: PathBuf,
+    /// Node decoder host. Default: `decoder/decoder.cjs` next to this executable
+    /// (release archives), otherwise the repository's `briskapi/decoder/decoder.cjs`.
+    #[arg(long)]
+    decoder: Option<PathBuf>,
     #[arg(long)]
     codes: Option<String>,
     #[arg(long, default_value_t = 1.0)]
@@ -42,6 +44,24 @@ struct Args {
     /// Optional lossless frame-batch recorder. The pipe applies backpressure.
     #[arg(long)]
     events: Option<PathBuf>,
+}
+
+fn decoder_path(explicit: Option<PathBuf>) -> PathBuf {
+    explicit.unwrap_or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| {
+                exe.parent()
+                    .map(|dir| dir.join("decoder").join("decoder.cjs"))
+            })
+            .filter(|path| path.exists())
+            .unwrap_or_else(|| {
+                PathBuf::from(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../briskapi/decoder/decoder.cjs"
+                ))
+            })
+    })
 }
 
 fn publish(path: &Path, state: &State) -> Result<()> {
@@ -103,7 +123,7 @@ async fn main() -> Result<()> {
     state = State::default();
     let mut command = Command::new(&args.node);
     command
-        .arg(&args.decoder)
+        .arg(decoder_path(args.decoder))
         .arg("--speed")
         .arg(args.speed.to_string())
         .stdout(Stdio::piped())

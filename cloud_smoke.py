@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 import tempfile
 
-from archive_schema import encode, synthetic_recording
-from brisk_archive import package, contribute, client, manifests, pull, settings
+from briskapi.schema import encode, synthetic_recording
+from briskapi.cli import package, contribute, client, manifests, pull, settings
 
 def main():
     config=settings()

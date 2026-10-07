@@ -3,37 +3,40 @@
 [English](README.md) | [日本語](README.ja.md)
 
 An unofficial, pybrisk-style Python API and `brisk` command line for BRiSK auction
-data. Consume a live feed, query recordings at any point in time, and pull shared
-recordings from a public archive. This is an independent project, not affiliated
-with or endorsed by BRiSK, Tachibana, SBI, TSE or JPX.
+data. Consume a live feed, query recordings at any point in time, pull shared
+recordings from a public archive, and use SBI BRiSK with your own account. This
+is an independent project, not affiliated with or endorsed by BRiSK, Tachibana,
+SBI, TSE or JPX.
 
-> **Data available today:** the public BRiSK Next demo of 27 September 2021 (one
-> pre-open snapshot and the first three minutes after the open), replayed at its
-> recorded pace. It is not live market data. Live data needs a Tachibana account
-> and is not supported yet.
+> **Data sources:**
+> - **No account needed:** the public BRiSK Next demo of 27 September 2021 (one
+>   pre-open snapshot and the first three minutes after the open), replayed at
+>   its recorded pace. This is not live market data.
+> - **With an SBI Securities BRiSK subscription:** SBI BRiSK market data (candles,
+>   margin, alerts, schedule, watchlist) and an experimental live feed.
 
 ## Install
 
-Python 3.12+, Node 22+ and Rust 1.92+:
+Python 3.12+. Live feeds and recording also need Node 22+, because BRiSK's own
+decoder is a WebAssembly module that runs under Node.
 
 ```sh
-git clone https://github.com/honvl/briskapi && cd briskapi
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[pandas]'   # `import brisk` and the `brisk` command
-cargo build --locked --release --manifest-path rust/brisk_quote_ingest/Cargo.toml   # only for `brisk record`
+pip install 'briskapi[pandas]'      # `import briskapi` and the `brisk` command
 ```
 
-Install from a checkout as shown (editable): the API uses the repository's decoder
-and archive settings in place. BRiSK's decoder and demo data are downloaded at
-runtime and are not included in the repository.
+BRiSK's decoder and demo data are downloaded at runtime; the package doesn't
+include them. Optional prebuilt Rust tools (`brisk_quote_ingest`,
+`brisk_recording`) for Linux, macOS and Windows are attached to each
+[GitHub release](https://github.com/honvl/BRiSKapi/releases). To work from source,
+clone the repository and run `pip install -e '.[pandas]'`.
 
 ## Live feed
 
 ```python
-import brisk
+import briskapi
 
-feed = brisk.connect(web=True, codes=["7203", "6758"])   # returns once initial state is in
-toyota = brisk.Ticker("7203")
+feed = briskapi.connect(web=True, codes=["7203", "6758"])   # returns once initial state is in
+toyota = briskapi.Ticker("7203")
 toyota.quote()        # current quote, updated as each frame arrives
 toyota.auction()      # indicative price/volume and market-order imbalance
 
@@ -43,34 +46,69 @@ for q in feed.quotes("7203"):       # one item per update; ends with the session
         print("opened at", q["last_price"], q["time"])
         break
 
-brisk.Market().imbalances(top=10).to_pandas()
-feed.wait()           # or feed.close(); `with brisk.connect(...) as feed:` also works
+briskapi.Market().imbalances(top=10).to_pandas()
+feed.wait()           # or feed.close(); `with briskapi.connect(...) as feed:` also works
 ```
 
-Options: `web=True` (fetch from the demo site) or `cache=DIR` (assets downloaded
-with `python tools/brisk_mock/download_mock.py --cache DIR`), `codes`, `speed`
-(`1` real time, `0` as fast as possible) and `history=True` (keep updates for
-`Ticker.history()`). Callbacks and iterators first receive each security's
-current quote, then every update in order. A slow consumer slows the feed instead
-of losing updates.
+Options: `web=True` (fetch from the demo site) or `cache=DIR` (a local copy of
+the demo assets), `codes`, `speed` (`1` real time, `0` as fast as possible) and
+`history=True` (keep updates for `Ticker.history()`). Callbacks and iterators
+first receive each security's current quote, then every update in order. A slow
+consumer slows the feed instead of losing updates.
 
 ## Recordings and the archive
 
 ```python
-brisk.recordings(source="historical_mock")   # published recordings; no AWS account needed
-brisk.pull("archive/20210927/SHA256")       # download, verify, decode and cache; becomes the default
-brisk.load("recordings/my-session")         # or a local recording (events.jsonl[.gz] or folder)
+briskapi.recordings(source="historical_mock")   # published recordings; no AWS account needed
+briskapi.pull("archive/20210927/SHA256")       # download, verify, decode and cache; becomes the default
+briskapi.load("recordings/my-session")         # or a local recording (events.jsonl[.gz] or folder)
+briskapi.record("recordings/my-session", web=True)   # record the demo yourself
 
-brisk.Ticker("7203").quote(at="08:59:59.99")               # state at any JST time
-brisk.Ticker("7203").history(start="09:00", end="09:01")   # every update in a window
-brisk.Market().snapshot(at="09:00:00").to_pandas()
+briskapi.Ticker("7203").quote(at="08:59:59.99")               # state at any JST time
+briskapi.Ticker("7203").history(start="09:00", end="09:01")   # every update in a window
+briskapi.Market().snapshot(at="09:00:00").to_pandas()
 ```
+
+## SBI BRiSK
+
+For SBI Securities customers with a BRiSK subscription. Log in on
+[sbi.brisk.jp](https://sbi.brisk.jp) in your browser, then pass its session
+cookies: copy them from DevTools, or use `pycookiecheat`'s
+`chrome_cookies("https://sbi.brisk.jp")`.
+
+```python
+from briskapi import sbi
+
+sbi.login(cookies={"session_bfaf77a2": "v2.local..."})   # remember=True saves them (owner-only file)
+sbi.Ticker("7203").ohlc("5m").to_pandas()   # 5m, 1d, 1w or 1mo candles
+sbi.Ticker("7203").jsfc(count=30)           # margin lending (JSFC)
+market = sbi.Market()
+market.stocks_info()      # turnover and shares outstanding, all stocks
+market.stock_lists()      # NK225, recent IPOs, …
+market.alerts()           # basket orders, limit up/down, volume events
+market.schedule()         # trading date, status and session times
+market.watchlist()        # your saved codes
+
+feed = sbi.connect(codes=["7203"])          # live (experimental): briskapi.Ticker/Market work on it
+briskapi.Ticker("7203").quote()
+```
+
+Method and column names follow [pybrisk](https://github.com/obichan117/pybrisk),
+which this client is derived from. Results use the conventions below. Errors are
+`sbi.SessionExpiredError` (log in again), `briskapi.NotFoundError`,
+`sbi.RateLimitError` and `sbi.APIError`. Requests are limited to one per second.
+
+The live feed runs SBI's own decoder under Node, downloaded with your session;
+no browser is involved. It hasn't yet been validated against a live SBI session,
+so it fails with an explicit error rather than guessing. Please report what you
+see. Your cookies go only to sbi.brisk.jp, and SBI data is never shared to the
+archive.
 
 ## API reference
 
 | Call | Returns |
 | --- | --- |
-| `brisk.connect(...)` | Live `Feed`; becomes the default source |
+| `briskapi.connect(...)` | Live `Feed`; becomes the default source |
 | `Ticker(code).info()` | Name, lot size, tick type, base price and daily limits |
 | `Ticker(code).quote(at=None)` | Bid/ask, indicative price/volume, market-order and closing quantities, last trade |
 | `Ticker(code).auction(at=None)` | Indicative auction state with `market_order_imbalance` (market buy minus sell) |
@@ -80,22 +118,24 @@ brisk.Market().snapshot(at="09:00:00").to_pandas()
 | `Market().imbalances(at=None, top=None)` | Securities ranked by absolute market-order imbalance |
 | `Market().summary()` | Source, date, coverage and clock range |
 | `Feed.quotes(codes)` / `Feed.on_quote(fn, codes)` | Live updates as they arrive |
-| `brisk.recordings()` / `brisk.pull()` / `brisk.load()` | Archive listing, verified download, local file |
-| `brisk.record(output, web=True, ...)` | A recording made with the Rust recorder, shared per your choice |
-| `brisk.consent(...)` | Your sharing choice |
+| `briskapi.recordings()` / `.pull()` / `.load()` | Archive listing, verified download, local file |
+| `briskapi.record(output, web=True, ...)` | A recording of the demo, shared per your choice |
+| `briskapi.consent(...)` | Your sharing choice |
+| `briskapi.sbi` | SBI BRiSK: see above |
 
 Prices are yen floats, with `None` for the vendor's zero "unavailable" value.
 Times are JST `datetime`s on the trading date. Quantities are shares; side, flag
 and status codes are raw vendor values. `raw=True` returns vendor fields
 (`*_price10` in tenths of a yen, `*_us` in microseconds since JST midnight).
 Tabular results are lists of dicts with `.to_pandas()`. Errors are
-`brisk.BriskError` and `brisk.NotFoundError`. A whole-market query reads a
+`briskapi.BriskError` and `briskapi.NotFoundError`. A whole-market query reads a
 recording once (about six seconds for the complete 420 MB demo).
 
 ## Command line
 
 ```sh
 brisk live --web --codes 7203,6758          # one JSON object per quote update (--raw for vendor fields)
+brisk live --sbi --codes 7203               # SBI BRiSK; cookies from BRISK_SBI_COOKIES (JSON)
 brisk record --web --output recordings/s1   # record a replay (shared if you agreed)
 brisk list --date 20210927 --source historical_mock
 brisk pull archive/20210927/SHA256 --output recordings/downloaded
@@ -108,10 +148,11 @@ overwrites an existing folder.
 
 ## Sharing recordings
 
-The first time you record or start a live session from the command line, the
-tool shows what would be shared and asks once; Enter accepts. After that, every
-complete session is uploaded and published automatically. The Python API never
-asks: until you decide, sessions stay on your computer.
+The first time you record or start a demo live session from the command line,
+the tool shows what would be shared and asks once; Enter accepts. After that,
+every complete demo session is uploaded and published automatically. The Python
+API never asks: until you decide, sessions stay on your computer. SBI sessions
+are never shared.
 
 - **What is shared:** the market data you recorded, local timing measurements
   (including your computer's clock, which shows when you recorded), and a public
@@ -131,10 +172,10 @@ asks: until you decide, sessions stay on your computer.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): how it works, data format, archive integrity and limits
 - [PRIVACY.md](PRIVACY.md): privacy policy
-- [CONTRIBUTING.md](CONTRIBUTING.md): development and tests
+- [CONTRIBUTING.md](CONTRIBUTING.md): development, tests and releases
 - [tools/brisk_mock/README.md](tools/brisk_mock/README.md): Rust collector, field definitions, timing and latency
 - [tools/brisk_mock/NAUTILUS_V2.md](tools/brisk_mock/NAUTILUS_V2.md): NautilusTrader v2 integration
 - [infra/README.md](infra/README.md): deploying your own archive
-- [THIRD_PARTY.md](THIRD_PARTY.md): decoder and data ownership
+- [THIRD_PARTY.md](THIRD_PARTY.md): decoder, data and pybrisk attribution
 
 Software is MIT licensed.

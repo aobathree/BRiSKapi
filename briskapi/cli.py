@@ -20,10 +20,11 @@ import warnings
 import boto3
 from botocore import UNSIGNED
 from botocore.config import Config
-from archive_schema import SCHEMA, canonical_lines, compress, digest, inspect_package, validate_manifest, validate_stream, require
+from briskapi.schema import SCHEMA, canonical_lines, compress, digest, inspect_package, validate_manifest, validate_stream, require
 
-ROOT = Path(__file__).resolve().parent
-BINARY = ROOT / 'rust/brisk_quote_ingest/target/release/brisk_quote_ingest'
+PACKAGE = Path(__file__).resolve().parent
+# BRiSK's own WASM decoder runs under Node; the package ships only this host and SHA-256 pins.
+DECODER = PACKAGE / 'decoder' / 'decoder.cjs'
 LICENSES = ('CC0-1.0', 'CC-BY-4.0')
 # Bump with any PRIVACY.md change to what is collected; saved choices then lapse.
 POLICY_VERSION = 1
@@ -37,11 +38,12 @@ automatically after each clean, complete replay. Each contribution contains:
 Published recordings are public and permanent. Your IP address is used only for
 upload rate limiting. No account, file, hostname or system details are sent.
 Accepting declares that you may redistribute these recordings under that license.
-Policy: PRIVACY.md. Opt out at any time: `consent --revoke` or BRISK_CONTRIBUTE=0.
+Policy: https://github.com/honvl/BRiSKapi/blob/main/PRIVACY.md
+Opt out at any time: `brisk consent --revoke` or BRISK_CONTRIBUTE=0.
 '''
 
 def settings(path=None):
-    return json.loads((path or ROOT / 'archive.json').read_text())
+    return json.loads((path or PACKAGE / 'archive.json').read_text())
 
 def consent_path():
     return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'brisk' / 'contribution.json'
@@ -183,26 +185,40 @@ def pull(s3, bucket, prefix, output):
         shutil.move(str(directory), str(output))
     return m
 
-def record_events(events, web=False, cache=None, codes=None, limit_frames=None, speed=1, binary=BINARY):
-    """Run the Rust recorder over the pinned demo decoder and save decoded batches."""
-    with tempfile.TemporaryDirectory() as tmp:
-        cmd = [str(binary), '--events', str(events), '--latest', str(Path(tmp) / 'latest.json'), '--speed', str(speed)]
-        cmd += ['--web'] if web else ['--cache', str(cache)]
-        if codes:
-            cmd += ['--codes', codes if isinstance(codes, str) else ','.join(codes)]
-        if limit_frames:
-            cmd += ['--limit-frames', str(limit_frames)]
-        subprocess.run(cmd, check=True)
+def record_events(events, web=False, cache=None, codes=None, limit_frames=None, speed=1, binary=None, node='node'):
+    """Replay the pinned demo and save its decoded batches.
+
+    Needs only Node. A Rust collector binary (`brisk_quote_ingest`) is optional; it
+    records the same batches and adds its own state validation and latency display.
+    """
+    options = ['--web'] if web else ['--cache', str(cache)]
+    options += ['--speed', str(speed)]
+    if codes:
+        options += ['--codes', codes if isinstance(codes, str) else ','.join(codes)]
+    if limit_frames:
+        options += ['--limit-frames', str(limit_frames)]
+    if binary:
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run([str(binary), '--decoder', str(DECODER), '--events', str(events),
+                            '--latest', str(Path(tmp) / 'latest.json'), *options], check=True)
+        return
+    with open(events, 'wb') as out:
+        subprocess.run([node, str(DECODER), *options], check=True, stdout=out)
 
 def live(args):
     """Print each quote update as one JSON line; a complete session is contributed per consent."""
-    from brisk import connect  # The API package builds on this module.
-    if load_consent() is None and os.environ.get('BRISK_CONTRIBUTE') != '0' and interactive():
-        ask_consent()
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter('always')
-        feed = connect(web=args.web, cache=args.cache, codes=args.codes.split(',') if args.codes else None,
-                       speed=args.speed, limit_frames=args.limit_frames)
+    from briskapi import connect, sbi  # The API package builds on this module.
+    codes = args.codes.split(',') if args.codes else None
+    if args.sbi:  # Your own SBI session: never contributed, so no sharing question.
+        sbi.login()
+        feed = sbi.connect(codes=codes)
+        caught = []
+    else:
+        if load_consent() is None and os.environ.get('BRISK_CONTRIBUTE') != '0' and interactive():
+            ask_consent()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            feed = connect(web=args.web, cache=args.cache, codes=codes, speed=args.speed, limit_frames=args.limit_frames)
     for warning in caught:
         print(warning.message, file=sys.stderr)
     try:
@@ -216,7 +232,7 @@ def live(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', type=Path, default=ROOT / 'archive.json')
+    parser.add_argument('--config', type=Path, default=PACKAGE / 'archive.json')
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('record', 'package'):
         p = sub.add_parser(name, help='Record a demo replay' if name == 'record' else 'Package a recording')
@@ -234,7 +250,7 @@ def main(argv=None):
             p.add_argument('--codes')
             p.add_argument('--limit-frames', type=int)
             p.add_argument('--speed', type=float, default=1)
-            p.add_argument('--binary', type=Path, default=BINARY)
+            p.add_argument('--binary', type=Path, help='Optional Rust collector (brisk_quote_ingest) for state validation and latency display')
         else:
             p.add_argument('--events', type=Path, required=True)
     p = sub.add_parser('live', help='Stream live quote updates as JSON lines')
@@ -245,6 +261,8 @@ def main(argv=None):
     p.add_argument('--speed', type=float, default=1)
     p.add_argument('--limit-frames', type=int)
     p.add_argument('--raw', action='store_true', help='Vendor fields (price10, microseconds) instead of yen/ISO times')
+    group.add_argument('--sbi', action='store_true',
+                       help='Live SBI BRiSK (experimental); cookies from BRISK_SBI_COOKIES or saved with sbi.login(remember=True)')
     p = sub.add_parser('upload', help='Contribute a prepared package'); p.add_argument('directory', type=Path)
     p = sub.add_parser('list', help='List published recordings'); p.add_argument('--date'); p.add_argument('--source', choices=['historical_mock','synthetic_test'])
     p = sub.add_parser('pull', help='Download and verify a recording'); p.add_argument('prefix'); p.add_argument('--output', type=Path, required=True)

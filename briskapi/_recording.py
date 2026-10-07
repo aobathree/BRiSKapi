@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Iterator
 
-from archive_schema import canonical_lines, validate_stream
+from briskapi.schema import canonical_lines, validate_stream
 
 JST = dt.timezone(dt.timedelta(hours=9), 'JST')
 PRICES = ('last_price10', 'open_price10', 'bid_price10', 'ask_price10', 'indicative_price10',
@@ -35,7 +35,7 @@ class Table(list):
         try:
             import pandas as pd
         except ImportError as e:  # pragma: no cover - depends on the environment
-            raise ImportError("Install pandas (pip install -e '.[pandas]') to use to_pandas()") from e
+            raise ImportError("Install pandas (pip install 'briskapi[pandas]') to use to_pandas()") from e
         return pd.DataFrame(list(self))
 
 

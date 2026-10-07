@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { Decoder, QuoteHistory, frames, u64, loadAssets, replay, main } = require('./decoder.cjs');
+const { Decoder, QuoteHistory, frames, u64, loadAssets, replay, main } = require('../../briskapi/decoder/decoder.cjs');
 const cache = process.env.BRISK_MOCK_CACHE;
 
 function frame(time, bytes = Buffer.from([1])) {
@@ -56,6 +56,8 @@ test('decoder rejects malformed snapshots, gaps and overflows', () => {
   }
   assert.throws(() => d.feed(Buffer.alloc(4 * 1024 * 1024 + 1)), /buffer/);
   d.authError = true; assert.throws(() => d.feed(Buffer.alloc(1)), /session/); d.authError = false;
+  assert.equal(d.start(Buffer.alloc(1)), false);  // waits for frame numbers
+  d.initialFrames = [1, 2];
   assert.throws(() => d.start(Buffer.alloc(1)), /bootstrap/);
   d.initialFrames = [1]; d.w._getFrameNumbers = () => {};
   assert.throws(() => d.start(Buffer.alloc(1)), /catch-up/);
@@ -105,7 +107,7 @@ test('filtering, replay pacing and partial-run termination', { skip: !cache }, a
 });
 
 test('CLI emits JSON only and reports failures', { skip: !cache }, () => {
-  const command = path.join(__dirname, 'decoder.cjs');
+  const command = path.join(__dirname, '../../briskapi/decoder/decoder.cjs');
   const run = spawnSync(process.execPath, [command, '--cache', cache, '--codes', '7203', '--speed', '0', '--limit-frames', '2'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const records = run.stdout.trim().split('\n').map(JSON.parse);

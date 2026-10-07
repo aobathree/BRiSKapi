@@ -22,6 +22,19 @@ def ignore_exists(call, **kwargs):
         if e.response['Error']['Code'] not in {'EntityAlreadyExists', 'ResourceInUseException', 'ResourceConflictException', 'BucketAlreadyOwnedByYou', 'ResourceAlreadyExistsException'}:
             raise
 
+def package():
+    """The Lambda zip: the service, the shared schema and reference fingerprints only."""
+    code=io.BytesIO()
+    with zipfile.ZipFile(code,'w',zipfile.ZIP_DEFLATED) as z:
+        z.write(ROOT/'archive_service.py','archive_service.py')
+        # An empty package init keeps the client API (and its dependencies) out.
+        z.writestr('briskapi/__init__.py','')
+        z.write(ROOT/'briskapi/schema.py','briskapi/schema.py')
+        # Reference fingerprints let ingest reject anything but genuine replays.
+        for path in sorted((ROOT/'briskapi/references').glob('*.json')):
+            z.write(path,f'briskapi/references/{path.name}')
+    return code.getvalue()
+
 def deploy(bucket):
     session = boto3.Session(region_name=REGION)
     s3, iam, lam, db = [session.client(n) for n in ('s3', 'iam', 'lambda', 'dynamodb')]
@@ -63,13 +76,7 @@ def deploy(bucket):
     logs=session.client('logs')
     ignore_exists(logs.create_log_group, logGroupName=f'/aws/lambda/{NAME}')
     logs.put_retention_policy(logGroupName=f'/aws/lambda/{NAME}', retentionInDays=14)
-    code=io.BytesIO()
-    with zipfile.ZipFile(code,'w',zipfile.ZIP_DEFLATED) as z:
-        for name in ['archive_service.py','archive_schema.py']:
-            z.write(ROOT/name,name)
-        # Reference fingerprints let ingest reject anything but genuine replays.
-        for path in sorted((ROOT/'references').glob('*.json')):
-            z.write(path,f'references/{path.name}')
+    code=io.BytesIO(package())
     try:
         existing=lam.get_function_configuration(FunctionName=NAME)['Environment']['Variables']
     except (lam.exceptions.ResourceNotFoundException, KeyError):
@@ -120,7 +127,7 @@ def deploy(bucket):
         {'Id':'AutomaticIngest','LambdaFunctionArn':function_arn,'Events':['s3:ObjectCreated:*'],
          'Filter':{'Key':{'FilterRules':[{'Name':'prefix','Value':'incoming/'},{'Name':'suffix','Value':'/events.jsonl.gz'}]}}}]})
     result={'bucket':bucket,'region':REGION,'api_url':url}
-    (ROOT/'archive.json').write_text(json.dumps(result,indent=2)+'\n')
+    (ROOT/'briskapi/archive.json').write_text(json.dumps(result,indent=2)+'\n')
     return result
 
 if __name__ == '__main__':

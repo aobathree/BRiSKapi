@@ -1,0 +1,13 @@
+{
+  "source": "https://next-demo.brisk.jp/",
+  "trading_date": "2021-09-27",
+  "protocol_version": 16000,
+  "ohlc_length": 60,
+  "assets": {
+    "fita.js": {"url": "https://next-demo.brisk.jp/assets/wasm/fita.3bebb8c6e713be6b68d6e8e7dd07945cb8b9f9ec.js", "sha256": "e970de67768c22236a24ab77c60b0106ff591f4f3d3618ee33dfe1abeb6ad698"},
+    "fita.wasm": {"url": "https://next-demo.brisk.jp/assets/wasm/fita.3bebb8c6e713be6b68d6e8e7dd07945cb8b9f9ec.wasm", "sha256": "1f901b9ccfbb457365fb5836b4187353f479cc7961d40b35a080f26d8359a1cb"},
+    "master.dat": {"url": "https://next-demo.brisk.jp/assets/754a650d27a7596b9987eac66eb92a76/master.dat", "sha256": "51e8f45f01e8b8f9e72476b61964332e90340b6940e84e3fe3b9f3fecc92506f"},
+    "snapshot.dat": {"url": "https://next-demo.brisk.jp/assets/754a650d27a7596b9987eac66eb92a76/snapshot.dat", "sha256": "6c82db8e1f8fb4a511db75b54cb6899d5539c3c7c4db2a3b5c9c66e28b5bfde9"},
+    "ws.dat": {"url": "https://next-demo.brisk.jp/assets/754a650d27a7596b9987eac66eb92a76/ws.dat", "sha256": "6a17eefa46608dab50c771703ff465f94fcab590695b7ff305c15eea32c0af2b"}
+  }
+}
