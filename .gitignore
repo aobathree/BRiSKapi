@@ -1,0 +1,15 @@
+.venv*/
+__pycache__/
+.pytest_cache/
+.coverage*
+htmlcov/
+*.so
+*.dylib
+*.pyd
+target/
+recordings/
+cache/
+*.jsonl
+*.jsonl.gz
+*.private.json
+.DS_Store
