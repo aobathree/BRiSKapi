@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.92"
 license = "MIT"
 description = "Historical BRiSK auction state and recording validator"
-repository = "https://github.com/honvl/brisk-recorder"
+repository = "https://github.com/honvl/briskapi"
 
 [lib]
 crate-type = ["rlib", "cdylib"]

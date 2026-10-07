@@ -22,8 +22,30 @@ Distinct receipt clocks remain distinct recordings; identical payloads
 deduplicate by hash. `references/historical_mock.json` pins the demo replay; it
 changes only with a re-audited asset pin (`tools/brisk_mock/build_reference.py`).
 
-Ordinary tests are local. `BRISK_MOCK_CACHE` opts into fixture replay. Optional
-v2 tests need the separately installed pinned runtime and native extension,
-as described in `tools/brisk_mock/NAUTILUS_V2.md`. Aim for at least 85% coverage
-of new behavior. Real cloud smoke tests require an operational configured API
-and publish explicitly synthetic data.
+## Development
+
+```sh
+.venv/bin/python -m pip install -r requirements-dev.txt -e .
+.venv/bin/python -m pytest tests \
+  --cov=archive_schema --cov=archive_service --cov=brisk_archive --cov=brisk --cov-fail-under=85
+.venv/bin/python tools/brisk_mock/download_mock.py --cache /tmp/brisk-mock-cache
+BRISK_MOCK_CACHE=/tmp/brisk-mock-cache .venv/bin/python -m pytest tools/brisk_mock/test_reference.py
+BRISK_MOCK_CACHE=/tmp/brisk-mock-cache node --test tools/brisk_mock/*.test.cjs
+BRISK_MOCK_CACHE=/tmp/brisk-mock-cache cargo test --locked \
+  --manifest-path rust/brisk_quote_ingest/Cargo.toml
+cargo fmt --manifest-path rust/brisk_quote_ingest/Cargo.toml --check
+cargo clippy --locked --manifest-path rust/brisk_quote_ingest/Cargo.toml --all-targets -- -D warnings
+```
+
+Ordinary tests are local and never touch the cloud. `BRISK_MOCK_CACHE` opts into
+fixture replay. Optional v2 tests need the separately installed pinned runtime
+and native extension, as described in `tools/brisk_mock/NAUTILUS_V2.md`. CI runs
+all of the above plus the actual Nautilus v2 bus. Aim for at least 85% coverage
+of new behavior.
+
+Keep `README.md` and `README.ja.md` in step; internals belong in `ARCHITECTURE.md`.
+
+`cloud_smoke.py` is an opt-in real cloud test against the configured archive. It
+publishes only the fixed synthetic fixture and checks that tampered content is
+rejected. Archive changes reach contributors only after `infra/deploy.py` runs
+(see `infra/README.md`).

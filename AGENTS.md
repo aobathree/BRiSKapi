@@ -6,7 +6,8 @@ upload tickets. Public `archive.json` contains only bucket, region and API URL.
 
 Run focused archive and API coverage (minimum 85%), the fixture reference test,
 Node tests, Rust tests/fmt/Clippy and, when changing the bus integration, the
-actual v2 tests. CI supplies downloaded demo fixtures. Keep README, PRIVACY.md and
+actual v2 tests. CI supplies downloaded demo fixtures. Keep README.md (usage only),
+its Japanese translation README.ja.md, ARCHITECTURE.md (internals), PRIVACY.md and
 schema documentation synchronized; changes to collected data bump `POLICY_VERSION`.
 
 `infra/deploy.py` mutates AWS resources and is reserved for explicit deployment

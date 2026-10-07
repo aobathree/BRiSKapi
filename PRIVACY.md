@@ -99,7 +99,7 @@ contribution if you cannot make that declaration.
 ## Operator and changes
 
 The archive is operated by the owner of
-[honvl/brisk-recorder](https://github.com/honvl/brisk-recorder). AWS provides the
+[honvl/briskapi](https://github.com/honvl/briskapi). AWS provides the
 infrastructure. Send removal requests and privacy questions to the operator through
 that GitHub account. Do not post personal data in a public issue.
 
