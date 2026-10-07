@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brisk-recorder"
+version = "0.2.0"
+description = "Python API, recorder and shared archive for BRiSK auction data"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = ["boto3>=1.41,<2"]
+
+[project.optional-dependencies]
+pandas = ["pandas>=2"]
+
+[project.scripts]
+brisk = "brisk_archive:main"
+
+# Install editable from a checkout: the CLI uses the repository's archive.json,
+# reference fingerprints, Node decoder and Rust recorder in place.
+[tool.setuptools]
+py-modules = ["archive_schema", "brisk_archive"]
+packages = ["brisk"]

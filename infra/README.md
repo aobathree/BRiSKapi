@@ -16,11 +16,21 @@ Resource names are `brisk-recorder-archive`; use a separate AWS account or chang
 `NAME` for a second installation. The deployer needs S3, Lambda, IAM role/policy,
 CloudWatch Logs, DynamoDB and STS access. It does not modify default AWS regions.
 
-The execution role can read/write only staging and archive objects, update the
-quota table and write its own logs. The function URL permits anonymous ticket
-requests; S3 POST policies grant only the ticket's particular key and exact size.
-Public bucket policy permits only TLS reads of `archive/` and listing that prefix.
-ACLs are disabled, encryption and versioning enabled. Logs expire after 14 days.
+The execution role can read/write only staging and archive objects, delete
+staging objects, update the quota table and write its own logs. The function URL
+permits anonymous ticket requests; S3 POST policies grant only the ticket's
+particular key and exact size. Public bucket policy permits only TLS reads of
+`archive/` and listing that prefix. ACLs are disabled, encryption and versioning
+enabled. Logs expire after 14 days.
+
+Ingest accepts only canonical recordings that match a reference replay and
+publishes its own gzip of the validated content (see the README's integrity
+section). The deployment package includes `references/*.json`. The function has
+1,769 MB (one vCPU) because validating and recompressing a complete 420 MB replay
+takes about a minute. Each validated staging upload, and any extra upload made
+with an already-used ticket, is deleted on arrival. The deployer creates a random
+`QUOTA_SALT` once and keeps it across redeploys, so per-IP quota entries are keyed
+hashes that cannot be reversed to addresses.
 
 The deployer reserves concurrency at four when the regional account quota allows
 it. The current small Tokyo account quota prevents reserving that capacity; AWS's

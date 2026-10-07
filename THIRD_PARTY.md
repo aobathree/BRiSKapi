@@ -6,7 +6,8 @@ and historical market data. Those files are fetched at runtime, are not included
 here and are not covered by this repository's MIT software license.
 Recording redistribution depends on the applicable data/provider permissions.
 
-Protocol research references https://github.com/obichan117/pybrisk; no source
-files, vendor bundles or raw captures from that repository are bundled here.
+Protocol research references https://github.com/obichan117/pybrisk, and the
+Python API follows its `Ticker`/`Market` style; no source files, vendor bundles
+or raw captures from that repository are bundled here.
 Dependencies retain their own licenses. Cargo.lock records Rust dependencies;
 boto3 uses Apache-2.0. NautilusTrader is an optional separately installed runtime.

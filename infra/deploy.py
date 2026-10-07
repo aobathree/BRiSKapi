@@ -4,6 +4,7 @@ import argparse
 import io
 import json
 from pathlib import Path
+import secrets
 import time
 import zipfile
 
@@ -55,6 +56,8 @@ def deploy(bucket):
     role_arn = iam.get_role(RoleName=NAME)['Role']['Arn']
     iam.put_role_policy(RoleName=NAME, PolicyName=NAME, PolicyDocument=json.dumps({'Version':'2012-10-17','Statement':[
         {'Effect':'Allow','Action':['s3:GetObject','s3:GetObjectVersion','s3:PutObject'],'Resource':[arn+'/incoming/*',arn+'/archive/*']},
+        # Staging uploads are removed once validated, rejected or superseded.
+        {'Effect':'Allow','Action':['s3:DeleteObject','s3:DeleteObjectVersion'],'Resource':arn+'/incoming/*'},
         {'Effect':'Allow','Action':'dynamodb:UpdateItem','Resource':f'arn:aws:dynamodb:{REGION}:{account}:table/{NAME}'},
         {'Effect':'Allow','Action':['logs:CreateLogStream','logs:PutLogEvents'],'Resource':f'arn:aws:logs:{REGION}:{account}:log-group:/aws/lambda/{NAME}:*'}]}))
     logs=session.client('logs')
@@ -64,8 +67,18 @@ def deploy(bucket):
     with zipfile.ZipFile(code,'w',zipfile.ZIP_DEFLATED) as z:
         for name in ['archive_service.py','archive_schema.py']:
             z.write(ROOT/name,name)
-    config=dict(Runtime='python3.12',Role=role_arn,Handler='archive_service.handler',Timeout=600,MemorySize=768,
-                Environment={'Variables':{'ARCHIVE_BUCKET':bucket,'QUOTA_TABLE':NAME}},
+        # Reference fingerprints let ingest reject anything but genuine replays.
+        for path in sorted((ROOT/'references').glob('*.json')):
+            z.write(path,f'references/{path.name}')
+    try:
+        existing=lam.get_function_configuration(FunctionName=NAME)['Environment']['Variables']
+    except (lam.exceptions.ResourceNotFoundException, KeyError):
+        existing={}
+    # Keyed IP hashing for rate limits; keep the key across redeploys.
+    salt=existing.get('QUOTA_SALT') or secrets.token_hex(32)
+    # Full-replay validation and recompression need about one vCPU.
+    config=dict(Runtime='python3.12',Role=role_arn,Handler='archive_service.handler',Timeout=600,MemorySize=1769,
+                Environment={'Variables':{'ARCHIVE_BUCKET':bucket,'QUOTA_TABLE':NAME,'QUOTA_SALT':salt}},
                 EphemeralStorage={'Size':512})
     try:
         lam.get_function(FunctionName=NAME)
