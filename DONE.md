@@ -4,6 +4,39 @@
 このブランチは上流追随と、将来 PR を出す場合の土台。自分用ツールは
 `../aobathree-brisk`（`bakyo`）にあり、このリポジトリに依存しない。
 
+## 2026-10-08: SBI証券版でライブ接続を試行（e支店と同じ地点で停止）
+
+SBI 口座で https://sbi.brisk.jp/ が使えるようになった（有償契約なし。無料利用条件のいずれかに
+該当したと思われる）ので、上流が本来の対象とする SBI 版で `brisk live --sbi --codes 7203` を試した。
+Cookie は専用 Chrome（`--remote-debugging-port=9222`）から CDP の `Network.getCookies` で取り込み、
+`sbi.login(remember=True)` で `~/.config/brisk/sbi-cookies.json` に保存（Cookie 名は `session_bfaf77a2`、
+README の例と同じ）。
+
+| 段階 | 結果 |
+| --- | --- |
+| Cookie 認証、`/api/frontend/boot`、`/api/app/boot`、`Market().schedule()` | 通る（取引日 2026-10-08、状態 done。大引け後の試行） |
+| デコーダー探索・取得 | 通る。`main-W3ZVNLJR.js` が参照するのは `` `./assets/wasm${i}/fita.35e38ad5e3418d94a68b666eb44450ebdd0c98b5.js` `` |
+| マスター構造体の解析（`decoder.cjs` の 144 バイト前提） | **失敗**。`Unsafe 64-bit quantity/timestamp` → `Feed failed before bootstrap: Decoder exited with 1` |
+| WebSocket 流路 | 未到達 |
+
+**e支店版との比較**: 同日の `/api/app/boot` は両サイトで `flex_version` 18000、`master` ハッシュ
+`9f3547ce…cfa1`、`snapshot` `5f259a4b…903c-2026-10-08-0` が**完全に一致**し、デコーダーも同じ
+`fita.35e38ad5…`。SBI 版と e支店版は同一ビルド・同一データで、失敗箇所も同一。つまり問題は
+サイト差ではなく、デモ版（`assets.json` の版）と現行ライブ版のマスター構造体レイアウトの差。
+上流 README の「まだ実際のセッションでは検証できていない」はこの地点で止まる、と言える。
+
+マスター構造体レイアウトの解析は 10-08 の判断どおり再開しない（下記）。上流に報告するなら、
+上の観測事実（版、ハッシュ、デコーダー名、エラー文）だけで足りる。
+
+**重複セッションについて**: e支店版は別タブ・別ブラウザで開くとメッセージ 10011 で元のタブも
+止まったが、SBI 版は普段の Chrome で開いていた BRiSK 画面が、専用 Chrome でのログインと上記の
+REST・デコーダー取得の間もそのまま使えていた（ユーザー観察）。ただし WebSocket 段階には
+到達していないので、ストリーム接続時に 10011 相当が起きるかは未確認。
+
+**規約面**: `../aobathree-brisk/docs/06-estn-and-brisk.md` §4b（SBI 約款・規程集 第 3 章 第 16 条・
+第 17 条、有料情報利用規程）を確認したうえでの試行。市場データは端末外に出していない
+（出力 0 行、タイミング共有はオフ）。
+
 ## 2026-10-08: 立花証券e支店の BRiSK Next を第 2 のサイトとして追加
 
 ### コミット
