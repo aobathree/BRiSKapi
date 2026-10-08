@@ -61,19 +61,21 @@ class Session {
 }
 
 // The decoder is served to logged-in sessions only and changes with releases,
-// so it is located through the app's own bundles rather than pinned.
+// so it is located through the app's own bundles rather than pinned. The page
+// may reference its bundles by absolute or relative path; the bundle names the
+// loader script as a literal or (e-shiten) as a template with an exchange
+// variant, `./assets/wasm${r}/fita.<hash>.js`, and derives the .wasm name from
+// it (Emscripten convention). Only the TSE variant (no suffix) is used here.
 async function decoderAssets(session) {
   const page = await session.get('/', 'text');
-  const scripts = [...page.matchAll(/<script[^>]+src="(\/[^"]+\.js)"/g)].map(m => m[1]);
+  const scripts = [...page.matchAll(/<script[^>]+src="(\.?\/?[\w./-]+\.js)"/g)].map(m => '/' + m[1].replace(/^\.?\//, ''));
   for (const script of scripts) {
     const source = await session.get(script, 'text');
-    const js = source.match(/["'`](\/?assets\/wasm\/fita[\w.-]*\.js)["'`]/);
-    const wasm = source.match(/["'`](\/?assets\/wasm\/fita[\w.-]*\.wasm)["'`]/);
-    if (js && wasm) {
-      const assets = { 'fita.js': await session.get('/' + js[1].replace(/^\//, ''), 'bytes'),
-        'fita.wasm': await session.get('/' + wasm[1].replace(/^\//, ''), 'bytes') };
-      return { assets, paths: [js[1], wasm[1]] };
-    }
+    const js = source.match(/["'`]\.?\/?assets\/wasm(?:\$\{\w+\})?\/(fita[\w.-]*)\.js["'`]/);
+    if (!js) continue;
+    const paths = [`/assets/wasm/${js[1]}.js`, `/assets/wasm/${js[1]}.wasm`];
+    const assets = { 'fita.js': await session.get(paths[0], 'bytes'), 'fita.wasm': await session.get(paths[1], 'bytes') };
+    return { assets, paths };
   }
   throw new Error('BRiSK decoder not found in the app bundles; the site layout may have changed');
 }

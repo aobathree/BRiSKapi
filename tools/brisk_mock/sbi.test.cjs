@@ -111,11 +111,20 @@ test('SBI host bootstraps from boot, master and snapshot, then streams frames', 
 
 test('e-shiten host uses its origin for REST and the API endpoint for the stream', { skip: !cache }, async () => {
   const { files, chunks } = demo();
-  const { fetchImpl, requests } = server(files);
+  // The e-shiten page names its bundles relatively, and the bundle builds the
+  // loader path from a template with an exchange variant; the .wasm name is derived.
+  const { fetchImpl, requests } = server(files, {
+    '/': () => '<html><script src="./parameters.js"></script><script src="main-UYWO2J5C.js" type="module"></script></html>',
+    '/parameters.js': () => 'window.x = 1',
+    '/main-UYWO2J5C.js': () => 'let r = exchange === Fukuoka ? "-fukuoka" : ""; this.loadScript(`./assets/wasm${r}/fita.test.js`)',
+  });
   const batches = [];
   await live({ cookies: { session_x: 'v' }, codes: ['7203'], emit: async b => batches.push(b), site: 'e-shiten',
     fetchImpl, WebSocketImpl: socketFrom(chunks), protocolVersion: 16000 });
   assert.ok(requests.every(r => r.host === 'next.e-shiten.brisk.jp' && r.headers.cookie === 'session_x=v'));
+  assert.deepEqual(requests.filter(r => r.path.endsWith('.js') || r.path.endsWith('.wasm')).map(r => r.path),
+    ['/parameters.js', '/main-UYWO2J5C.js', '/assets/wasm/fita.test.js', '/assets/wasm/fita.test.wasm']);
+  assert.deepEqual(batches[0].input_transport.decoder, ['/assets/wasm/fita.test.js', '/assets/wasm/fita.test.wasm']);
   assert.equal(String(socketFrom.last.url), 'wss://api.brisk.jp/realtime/0?session=abc');
   assert.deepEqual(socketFrom.last.init.headers, { origin: 'https://next.e-shiten.brisk.jp' });
   assert.equal(batches[0].source, 'eshiten_live');
