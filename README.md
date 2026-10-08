@@ -4,7 +4,8 @@
 
 An unofficial, pybrisk-style Python API and `brisk` command line for BRiSK auction
 data. Consume a live feed, query recordings at any point in time, pull shared
-recordings from a public archive, and use SBI BRiSK with your own account. This
+recordings from a public archive, and use SBI BRiSK or Tachibana e-shiten BRiSK
+Next with your own account. This
 is an independent project, not affiliated with or endorsed by BRiSK, Tachibana,
 SBI, TSE or JPX.
 
@@ -12,8 +13,9 @@ SBI, TSE or JPX.
 > - **No account needed:** the public BRiSK Next demo of 27 September 2021 (one
 >   pre-open snapshot and the first three minutes after the open), replayed at
 >   its recorded pace. This is not live market data.
-> - **With an SBI Securities BRiSK subscription:** SBI BRiSK market data (candles,
->   margin, alerts, schedule, watchlist) and an experimental live feed.
+> - **With an SBI Securities BRiSK subscription or a Tachibana e-shiten account:**
+>   that site's BRiSK market data (candles, margin, alerts, schedule, watchlist)
+>   and an experimental live feed.
 
 ## Install
 
@@ -98,12 +100,30 @@ Results use the conventions below. Errors are `sbi.SessionExpiredError` (log in
 again), `briskapi.NotFoundError`, `sbi.RateLimitError` and `sbi.APIError`.
 Requests are limited to one per second.
 
-The live feed runs SBI's own decoder under Node, downloaded with your session;
-no browser is involved. It hasn't yet been validated against a live SBI session,
-so it fails with an explicit error rather than guessing. Please report what you
-see. Your cookies go only to sbi.brisk.jp, and SBI market data never leaves
-your computer. With sharing on, a session contributes only a timing summary (see
-below).
+The live feed runs the site's own decoder under Node, downloaded with your
+session; no browser is involved. It hasn't yet been validated against a live
+session, so it fails with an explicit error rather than guessing. Please report
+what you see. Your cookies go only to the site you logged in to, and its market
+data never leaves your computer. With sharing on, a session contributes only a
+timing summary (see below).
+
+### Tachibana e-shiten BRiSK Next
+
+Tachibana Securities e-shiten customers get the same app at
+[next.e-shiten.brisk.jp](https://next.e-shiten.brisk.jp). Pass `site="e-shiten"`;
+everything else is identical, and cookies remembered for each site are kept
+apart.
+
+```python
+sbi.login(cookies={...}, site="e-shiten")
+briskapi.Market().schedule()
+feed = sbi.connect(codes=["7203"])          # live (experimental)
+```
+
+The live stream connects to BRiSK's API host named by the site (`api.brisk.jp`),
+authenticated by the session token the site issues; your cookies are not sent
+there. If the stream never initializes, the site's build may use another decoder
+protocol version: try `sbi.connect(protocol_version=16000)`.
 
 ## API reference
 
@@ -124,7 +144,7 @@ below).
 | `briskapi.consent(...)` | Your sharing choice |
 | `Ticker(code).candles(interval)` / `.margin(days)` | SBI BRiSK price bars; margin balances and lending fees |
 | `Market().turnover()` / `.lists()` / `.events()` / `.schedule()` / `.watchlist()` | SBI BRiSK market data |
-| `briskapi.sbi.login()` / `.connect()` | SBI BRiSK session and live feed |
+| `briskapi.sbi.login(site=...)` / `.connect()` | SBI BRiSK or e-shiten BRiSK Next session and live feed |
 
 Prices are yen floats, with `None` for the vendor's zero "unavailable" value.
 Times are JST `datetime`s on the trading date. Quantities are shares; side, flag
@@ -139,6 +159,7 @@ recording once (about six seconds for the complete 420 MB demo).
 ```sh
 brisk live --web --codes 7203,6758          # one JSON object per quote update (--raw for vendor fields)
 brisk live --sbi --codes 7203               # SBI BRiSK; cookies from BRISK_SBI_COOKIES (JSON)
+brisk live --e-shiten --codes 7203          # Tachibana e-shiten BRiSK Next; cookies as above
 brisk record --web --output recordings/s1   # record a replay (shared if you agreed)
 brisk list --date 20210927 --source historical_mock
 brisk pull archive/20210927/SHA256 --output recordings/downloaded
@@ -156,7 +177,7 @@ the tool shows what would be shared and asks once; Enter accepts. After that,
 every complete demo session is uploaded and published automatically. The Python
 API never asks: until you decide, sessions stay on your computer.
 
-- **SBI sessions share timing only:** percentiles of decode time, data age at
+- **SBI and e-shiten sessions share timing only:** percentiles of decode time, data age at
   receipt and frame spacing, a stall count, the frame count, the trading date,
   the first and last minute, and your alias and license. Never prices,
   quantities or codes. `briskapi.Archive().timing()` lists everyone's reports.

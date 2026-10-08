@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 import urllib.error
+import urllib.parse
 import zlib
 
 from briskapi.timing import TimingStats
@@ -50,16 +51,17 @@ class Opener:
 
     def open(self, request, timeout):
         self.requests.append(request)
-        path = request.full_url.removeprefix(sbi.ORIGIN).split('?')[0]
-        value = self.routes.get(path, 404)
+        url = urllib.parse.urlsplit(request.full_url)
+        self.origins = getattr(self, 'origins', set()) | {f'{url.scheme}://{url.netloc}'}
+        value = self.routes.get(url.path, 404)
         if isinstance(value, int):
             raise urllib.error.HTTPError(request.full_url, value, 'error', {}, io.BytesIO(b'details'))
         return Response(value if isinstance(value, bytes) else json.dumps(value).encode())
 
 
-def client(**routes):
+def client(site='sbi', **routes):
     opener = Opener({'/api/frontend/boot': BOOT, '/api/app/boot': APP_BOOT, **routes})
-    session = sbi.Session({'session_bfaf77a2': 'v2.local.cookie'}, rate_limit=0, opener=opener)
+    session = sbi.Session({'session_bfaf77a2': 'v2.local.cookie'}, rate_limit=0, opener=opener, site=site)
     return sbi.Client(session=session), opener
 
 
@@ -79,6 +81,17 @@ def test_boot_and_headers():
     assert app.get_header('Authorization') == 'Bearer v2.local.testtoken'
     c.boot  # cached: no further requests
     assert len(opener.requests) == 2
+    assert opener.origins == {'https://sbi.brisk.jp'} and c.site == 'sbi'
+
+
+def test_e_shiten_site_uses_its_own_origin():
+    c, opener = client(site='e-shiten', **{'/api/ohlc/7203': OHLC})
+    assert c.candles('7203', '5m')[0]['close'] == 2030 and c.site == 'e-shiten'
+    assert opener.origins == {'https://next.e-shiten.brisk.jp'}
+    with pytest.raises(ValueError, match='Unknown BRiSK site'):
+        sbi.Session({'a': 'b'}, site='monex')
+    with pytest.raises(ValueError, match='Unknown BRiSK site'):
+        sbi.cookies_path('monex')
 
 
 def test_ticker_candles_and_margin():
@@ -154,11 +167,15 @@ def test_login_sources(monkeypatch, tmp_path):
     path = sbi.cookies_path()
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600 and json.loads(path.read_text()) == {'saved': 'yes'}
     assert sbi.login().session.cookies == {'saved': 'yes'}
+    # Each site remembers its own cookies.
+    sbi.login({'tachibana': 'yes'}, remember=True, site='e-shiten')
+    assert sbi.cookies_path('e-shiten').name == 'e-shiten-cookies.json'
+    assert sbi.login(site='e-shiten').session.cookies == {'tachibana': 'yes'} and sbi.login().session.cookies == {'saved': 'yes'}
     sbi._client.session._opener = Opener({'/api/frontend/boot': BOOT, '/api/app/boot': APP_BOOT})
     sbi._client.session.rate_limit = 0
     assert briskapi.Market().schedule()['date'] == '2026-03-11'  # default session used
     sbi.logout()
-    assert not path.exists() and sbi._client is None
+    assert not path.exists() and not sbi.cookies_path('e-shiten').exists() and sbi._client is None
 
 
 OPEN_US = 9 * 3600 * 1_000_000
@@ -187,7 +204,7 @@ def fake_host(tmp_path, monkeypatch):
     script = tmp_path / 'sbi_fake.cjs'
     script.write_text(
         "const c = JSON.parse(process.env.BRISK_SBI_COOKIES); if (c.session_bfaf77a2 !== 'v') process.exit(9);\n"
-        f"console.error(JSON.stringify(process.argv.slice(2)));\n"
+        "const e = process.env; console.error(JSON.stringify([process.argv.slice(2), e.BRISK_SBI_SITE, e.BRISK_SBI_PROTOCOL_VERSION]));\n"
         f"for (const b of {json.dumps(batches)}) console.log(JSON.stringify(b));\n")
     monkeypatch.setattr(sbi, 'DECODER', script)
 
@@ -200,7 +217,15 @@ def test_live_feed_via_node(fake_host, capfd):
     assert briskapi.Ticker('7203').quote()['last_price'] == 10160.0 and feed.contribution is None
     assert len(briskapi.Ticker('7203').history()) == 151 and feed.timing_contribution is None
     # Cookies reach the host through its environment, never its (world-readable) arguments.
-    assert capfd.readouterr().err.strip() == '["--codes","7203"]'
+    assert capfd.readouterr().err.strip() == '[["--codes","7203"],"sbi",null]'
+
+
+def test_live_feed_e_shiten(fake_host, capfd):
+    sbi.login({'session_bfaf77a2': 'v'}, site='e-shiten')
+    feed = sbi.connect(protocol_version=16000, history=True)
+    feed.wait()
+    assert capfd.readouterr().err.strip() == '[[],"e-shiten","16000"]'
+    assert feed._timing is None or feed._timing[0].source == 'eshiten_live'
 
 
 def test_live_feed_failure_closes(fake_host, tmp_path, monkeypatch):
@@ -218,10 +243,14 @@ def test_cli_live_sbi(fake_host, monkeypatch, capsys):
     cli.main(['live', '--sbi', '--codes', '7203'])
     out = capsys.readouterr()
     lines = [json.loads(line) for line in out.out.splitlines()]
-    # The question explains that SBI sessions share only a timing summary.
+    # The question explains that broker sessions share only a timing summary.
     assert lines[-1]['last_price'] == 10160.0 and 'timing summary' in out.err
     assert cli.load_consent()['enabled'] and sent[0]['source'] == 'sbi_live'
     assert not {'quotes', 'master', 'code', 'price'} & set(json.dumps(sent[0]).replace('"', ' ').split())
+    cli.main(['live', '--e-shiten'])
+    assert sent[1]['source'] == 'eshiten_live' and sbi._client.site == 'e-shiten'
+    with pytest.raises(SystemExit):
+        cli.main(['live', '--sbi', '--e-shiten'])
 
 
 def test_sbi_feed_contributes_timing_only(fake_host, monkeypatch):

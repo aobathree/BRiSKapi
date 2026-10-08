@@ -57,20 +57,24 @@ orders, usernames, hostnames, file paths, environment variables or hardware
 identifiers. The archive service accepts only the fields listed above and rejects
 any recording that contains other fields, so a modified client cannot add them.
 
-## SBI BRiSK
+## SBI BRiSK and Tachibana e-shiten BRiSK Next
 
-The SBI BRiSK client (`briskapi.sbi`, `brisk live --sbi`) uses session cookies
-from your own browser. They are credentials:
+The broker client (`briskapi.sbi`, `brisk live --sbi` / `--e-shiten`) uses session
+cookies from your own browser. They are credentials:
 
-- They are sent only to `https://sbi.brisk.jp`, together with the API token it
-  issues. The client never follows redirects, so they can't be forwarded elsewhere.
+- They are sent only to the site you logged in to (`https://sbi.brisk.jp` or
+  `https://next.e-shiten.brisk.jp`), together with the API token it issues. The
+  client never follows redirects, so they can't be forwarded elsewhere. The live
+  stream itself goes to the BRiSK API host the site names (`api.brisk.jp`),
+  authenticated by a session token the site issues for that purpose; cookies are
+  not sent there, and any host outside `brisk.jp` is refused.
 - They stay in memory unless you call `sbi.login(..., remember=True)`, which saves
-  them to `~/.config/brisk/sbi-cookies.json` (or `$XDG_CONFIG_HOME/brisk/`),
-  readable only by you. `sbi.logout()` deletes that file.
+  them to `~/.config/brisk/sbi-cookies.json` or `e-shiten-cookies.json` (or under
+  `$XDG_CONFIG_HOME/brisk/`), readable only by you. `sbi.logout()` deletes those files.
 - The live host receives them through its environment, not its command line.
-- SBI market data (prices, quantities, codes, quotes, master data) never leaves
+- Broker market data (prices, quantities, codes, quotes, master data) never leaves
   your computer.
-- With contribution on, an SBI session contributes one **timing summary** when it
+- With contribution on, a broker session contributes one **timing summary** when it
   ends (or when you close it after at least 100 frames): the p50/p90/p99/max of
   per-frame decode time, of the feed clock's age at local receipt and of the
   spacing between frames; the number of gaps over one second; the frame count;

@@ -46,8 +46,9 @@ of new behavior.
 Keep `README.md` and `README.ja.md` in step; internals belong in `ARCHITECTURE.md`.
 Everything the installed package needs at runtime lives in `briskapi/` (package
 data is listed in `pyproject.toml`); CI installs the wheel outside the repository
-and runs it. SBI tests use pybrisk's sample payloads and a fake server. SBI market data
-must never reach the archive; SBI sessions contribute timing reports only
+and runs it. SBI and e-shiten tests use pybrisk's sample payloads and a fake server
+(the e-shiten site serves the same endpoints). Broker market data
+must never reach the archive; SBI and e-shiten sessions contribute timing reports only
 (`briskapi/timing.py`, validated by `validate_timing` in `briskapi/schema.py`).
 
 ## Releases

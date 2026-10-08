@@ -4,8 +4,8 @@
 
 BRiSK の板寄せデータを扱う、非公式の pybrisk 風 Python API と `brisk`
 コマンドラインツールです。ライブフィードの購読、記録データの任意時点での照会、
-公開アーカイブからの共有記録の取得に加え、ご自身の口座で SBI BRiSK も利用
-できます。本プロジェクトは独立したもので、BRiSK、立花証券、SBI証券、
+公開アーカイブからの共有記録の取得に加え、ご自身の口座で SBI BRiSK や
+立花証券e支店の BRiSK Next も利用できます。本プロジェクトは独立したもので、BRiSK、立花証券、SBI証券、
 東京証券取引所（TSE）、日本取引所グループ（JPX）とは提携しておらず、承認も
 受けていません。
 
@@ -13,9 +13,9 @@ BRiSK の板寄せデータを扱う、非公式の pybrisk 風 Python API と `
 > - **口座不要:** 2021年9月27日の公開 BRiSK Next デモ（寄り前のスナップショット
 >   1件と寄付から3分間）を、記録時のペースで再生したもの。リアルタイムの市場
 >   データではありません。
-> - **SBI証券の BRiSK 契約がある場合:** SBI BRiSK の市場データ（ローソク足、
->   信用残、アラート、取引スケジュール、ウォッチリスト）と、試験的なライブ
->   フィード。
+> - **SBI証券の BRiSK 契約、または立花証券e支店の口座がある場合:** その
+>   サイトの BRiSK 市場データ（ローソク足、信用残、アラート、取引スケジュール、
+>   ウォッチリスト）と、試験的なライブフィード。
 
 ## インストール
 
@@ -102,12 +102,31 @@ toyota.quote()                              # 他のフィードと同じ呼び�
 必要）、`briskapi.NotFoundError`、`sbi.RateLimitError`、`sbi.APIError` です。
 リクエストは1秒に1回までに制限しています。
 
-ライブフィードは、ご自身のセッションでダウンロードした SBI 自身のデコーダーを
-Node 上で動かします。ブラウザは使いません。まだ実際の SBI セッションでは
+ライブフィードは、ご自身のセッションでダウンロードしたサイト自身のデコーダーを
+Node 上で動かします。ブラウザは使いません。まだ実際のセッションでは
 検証できていないため、推測で動かさず、問題があれば明示的なエラーで止まり
-ます。結果をぜひお知らせください。Cookie は sbi.brisk.jp にのみ送られ、SBI の
-市場データがお使いのコンピューターから出ることはありません。共有をオンにすると、
-セッションはタイミングの要約だけを共有します（下記参照）。
+ます。結果をぜひお知らせください。Cookie はログインしたサイトにのみ送られ、
+その市場データがお使いのコンピューターから出ることはありません。共有をオンに
+すると、セッションはタイミングの要約だけを共有します（下記参照）。
+
+### 立花証券e支店の BRiSK Next
+
+立花証券e支店のお客様は、同じアプリを
+[next.e-shiten.brisk.jp](https://next.e-shiten.brisk.jp) で利用できます。
+`site="e-shiten"` を指定するだけで、それ以外は同じです。`remember=True` で
+保存する Cookie はサイトごとに分けて保管されます。
+
+```python
+sbi.login(cookies={...}, site="e-shiten")
+briskapi.Market().schedule()
+feed = sbi.connect(codes=["7203"])          # ライブ（試験的）
+```
+
+ライブの流路は、サイトが指定する BRiSK の API ホスト（`api.brisk.jp`）に、
+サイトが発行するセッショントークンで接続します。Cookie はそこへは送られ
+ません。ストリームが初期化されない場合は、そのサイトのビルドが別のデコーダー
+プロトコル版を使っている可能性があるので、`sbi.connect(protocol_version=16000)`
+を試してください。
 
 ## API リファレンス
 
@@ -128,7 +147,7 @@ Node 上で動かします。ブラウザは使いません。まだ実際の SB
 | `briskapi.consent(...)` | 共有の設定 |
 | `Ticker(code).candles(interval)` / `.margin(days)` | SBI BRiSK のローソク足、信用残と貸株料 |
 | `Market().turnover()` / `.lists()` / `.events()` / `.schedule()` / `.watchlist()` | SBI BRiSK の市場データ |
-| `briskapi.sbi.login()` / `.connect()` | SBI BRiSK のセッションとライブフィード |
+| `briskapi.sbi.login(site=...)` / `.connect()` | SBI BRiSK または e支店 BRiSK Next のセッションとライブフィード |
 
 価格は円単位の浮動小数点数で、ベンダーの「値なし」（0）は `None` になります。
 時刻は取引日の日本時間の `datetime` です。数量は株数で、売買区分・フラグ・
@@ -143,6 +162,7 @@ Node 上で動かします。ブラウザは使いません。まだ実際の SB
 ```sh
 brisk live --web --codes 7203,6758          # 気配の更新ごとに JSON を1行出力（--raw でベンダー形式）
 brisk live --sbi --codes 7203               # SBI BRiSK。Cookie は BRISK_SBI_COOKIES（JSON）から
+brisk live --e-shiten --codes 7203          # 立花証券e支店 BRiSK Next。Cookie は同上
 brisk record --web --output recordings/s1   # デモを記録（同意済みなら共有）
 brisk list --date 20210927 --source historical_mock
 brisk pull archive/20210927/SHA256 --output recordings/downloaded
@@ -161,7 +181,7 @@ brisk upload recordings/s1                  # 記録の共有を再試行
 Python API から確認を求めることはありません。決めるまでは、セッションは
 お使いのコンピューターにだけ保存されます。
 
-- **SBI のセッションはタイミングのみ共有:** デコード時間、受信時のデータの
+- **SBI と e支店のセッションはタイミングのみ共有:** デコード時間、受信時のデータの
   遅れ、フレーム間隔のパーセンタイル、停滞回数、フレーム数、取引日、最初と
   最後の分、エイリアスとライセンスだけです。価格、数量、銘柄コードは一切
   共有しません。`briskapi.Archive().timing()` で全員のレポートを一覧できます。

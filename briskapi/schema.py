@@ -308,9 +308,9 @@ def repack(path, manifest, output, references=None):
     require(summary == manifest['summary'], 'Summary mismatch')
     return validate_manifest({**manifest, 'sha256': digest(output), 'bytes': output.stat().st_size})
 
-# Timing reports: what an SBI session contributes instead of market data.
+# Timing reports: what a broker (SBI, e-shiten) session contributes instead of market data.
 TIMING_SCHEMA = 'brisk-timing-v1'
-TIMING_SOURCES = {'sbi_live'}
+TIMING_SOURCES = {'sbi_live', 'eshiten_live'}
 TIMING_KEYS = {'schema', 'source', 'trading_date', 'first_minute', 'last_minute', 'frames', 'stalls',
                'client_version', 'decode_ms', 'source_age_ms', 'interarrival_ms', 'contributor', 'license'}
 QUANTILES = ('p50', 'p90', 'p99', 'max')

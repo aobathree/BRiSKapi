@@ -86,28 +86,48 @@ hour, 600 in total); and writes its own canonical JSON to
 most 2 KB, so it can't carry other data. `briskapi.Archive().timing()` reads
 them back.
 
-## SBI BRiSK
+## SBI BRiSK and Tachibana e-shiten BRiSK Next
 
 The endpoint sequence was learned from pybrisk: session cookies authenticate
-`/api/frontend/boot`, which returns a bearer token; `/api/app/boot` then gives
-the trading date, series, schedule, WebSocket URL and master/snapshot hashes.
-Requests are rate limited and never follow redirects, because a redirect means
-an expired session and following it would forward credentials.
+`/api/frontend/boot`, which returns a bearer token and the API endpoint; `/api/app/boot`
+then gives the trading date, series, schedule, WebSocket URL and master/snapshot
+hashes. Requests are rate limited and never follow redirects, because a redirect
+means an expired session and following it would forward credentials.
+
+Tachibana's e-shiten site (`next.e-shiten.brisk.jp`) serves the same app with the
+same endpoints and decoder layout, mapped in a browser session on 2026-10-08. A
+site table in `briskapi/sbi.py` and `briskapi/decoder/sbi.cjs` (`sbi`, `e-shiten`)
+selects the origin; `sbi.login(site=...)` and `brisk live --e-shiten` choose it, and
+the Python side passes it to the host as `BRISK_SBI_SITE`. Remembered cookies are
+stored per site. The e-shiten site also opens a second socket
+(`/api/market-realtime`, authenticated by `/api/market-token`) and calls
+`/api/stocks_update`; neither is used by the host.
 
 The live host (`briskapi/decoder/sbi.cjs`) uses the same session to fetch the
 master and snapshot, finds SBI's decoder through the app's own bundles (it is
 served only to logged-in sessions and changes with SBI releases, so it can't be
 pinned), checks that it exports every function the host calls, and decodes
-WebSocket frames with protocol version 18000. Cookies reach it through the
+WebSocket frames with protocol version 18000 (`BRISK_SBI_PROTOCOL_VERSION` or
+`sbi.connect(protocol_version=...)` override it). Cookies reach it through the
 environment, never the command line.
+
+The relative `ws_url` from `/api/app/boot` is resolved against the frontend boot's
+`api_endpoint` (`https://api.brisk.jp` for e-shiten), as the browser does, and only
+against the site itself when none is named. The session token in that URL
+authenticates the stream, so cookies are added to the handshake only when the
+stream host is the login site; the handshake carries the site as `Origin`. Any
+stream host outside `brisk.jp` is refused.
 
 What is verified: the decoder SBI served in pybrisk's March 2026 capture exports
 the demo's interface apart from `_getPortfolio` (so SBI quotes have no
-`issue_status`), and it initializes under Node with protocol 18000. The host's
-whole flow is tested offline against a fake server using the demo decoder. What
-is not yet verified against a live session: the WebSocket handshake, keepalives,
-whether the snapshot needs catch-up (`/api/stocks_update`) before the stream
-starts, and the stock-view layout of SBI's build. Each of these fails with an
+`issue_status`), and it initializes under Node with protocol 18000. The e-shiten
+stream was observed in a browser as inbound binary messages of tens to hundreds
+of bytes every few milliseconds, which is the frame shape the host expects. The
+host's whole flow is tested offline against a fake server using the demo decoder.
+What is not yet verified against a live session: the WebSocket handshake,
+keepalives, whether the snapshot needs catch-up (`/api/stocks_update`) before the
+stream starts, the e-shiten build's protocol version and the stock-view layout of
+either broker's build. Each of these fails with an
 explicit error (for example, a stream that never initializes, or quotes whose
 frame or time are implausible) rather than producing guessed data.
 

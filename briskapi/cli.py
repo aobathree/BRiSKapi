@@ -36,7 +36,7 @@ After each clean, complete demo replay the contribution contains:
   - local timing measurements: decode durations, replay lateness, asset download
     time and your computer's receipt clock, which shows when you recorded;
   - your public alias and data license, in the published manifest.
-SBI BRiSK sessions contribute only a timing summary: decode time, data age and
+Broker BRiSK sessions (SBI, e-shiten) contribute only a timing summary: decode time, data age and
 frame spacing percentiles, stalls, frame count, date and start/end minute. No
 prices, quantities or codes.
 Contributions are public and permanent. Your IP address is used only for
@@ -233,8 +233,8 @@ def live(args):
         ask_consent()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
-        if args.sbi:  # Market data stays local; only a timing summary is contributed.
-            sbi.login()
+        if args.site:  # Market data stays local; only a timing summary is contributed.
+            sbi.login(site=args.site)
             feed = sbi.connect(codes=codes)
         else:
             feed = connect(web=args.web, cache=args.cache, codes=codes, speed=args.speed, limit_frames=args.limit_frames)
@@ -280,8 +280,10 @@ def main(argv=None):
     p.add_argument('--speed', type=float, default=1)
     p.add_argument('--limit-frames', type=int)
     p.add_argument('--raw', action='store_true', help='Vendor fields (price10, microseconds) instead of yen/ISO times')
-    group.add_argument('--sbi', action='store_true',
+    group.add_argument('--sbi', action='store_const', dest='site', const='sbi',
                        help='Live SBI BRiSK (experimental); cookies from BRISK_SBI_COOKIES or saved with sbi.login(remember=True)')
+    group.add_argument('--e-shiten', action='store_const', dest='site', const='e-shiten',
+                       help='Live Tachibana e-shiten BRiSK Next (experimental); cookies as for --sbi')
     p = sub.add_parser('upload', help='Contribute a prepared package'); p.add_argument('directory', type=Path)
     p = sub.add_parser('list', help='List published recordings'); p.add_argument('--date'); p.add_argument('--source', choices=['historical_mock','synthetic_test'])
     p = sub.add_parser('pull', help='Download and verify a recording'); p.add_argument('prefix'); p.add_argument('--output', type=Path, required=True)

@@ -88,7 +88,7 @@ class Feed:
 
     def __init__(self, web=False, cache=None, codes=None, speed=1, limit_frames=None, contribute=None,
                  history=False, node='node', *, command=None, env=None, timing=None):
-        # `command` runs another decoder host (SBI live). Its market data is never
+        # `command` runs another decoder host (SBI or e-shiten live). Its market data is never
         # contributed; with `timing` set, a timing-only summary may be.
         if command is None:
             choice, upload = _consent(contribute, limit_frames)
