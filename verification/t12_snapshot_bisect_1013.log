@@ -1,0 +1,13 @@
+records 4440; length min 499 median 2414 max 31067
+== today's decoder
+record 0 only: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+record 1 only: FAILED Invalid stock (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+records 0-9: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+records 0-99: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+records 0-999: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+last record only: FAILED Invalid stock (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+shortest record only: FAILED Invalid stock (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+== SBI decoder of March 2026 (pybrisk pin) with today's master and snapshot
+master only: FAILED Unsafe 64-bit quantity/timestamp
+record 0 only: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+full snapshot: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)

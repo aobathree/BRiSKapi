@@ -1,0 +1,21 @@
+boot: {
+  date: '2026-10-09',
+  series: 0,
+  flex_version: 18000,
+  ws_url: 'absent',
+  session_status: 'done',
+  next_date: 1791846000,
+  base_prices: 0
+}
+decoder paths: [
+  '/assets/wasm/fita.35e38ad5e3418d94a68b666eb44450ebdd0c98b5.js',
+  '/assets/wasm/fita.35e38ad5e3418d94a68b666eb44450ebdd0c98b5.wasm'
+]
+fita.js: 132,653 bytes sha256 74a9401ba57f5cc6…
+fita.wasm: 437,041 bytes sha256 8d60edb1afff9593…
+master.dat: 799,200 bytes sha256 6a6d860eb6906f60…
+snapshot.dat: 48,134,876 bytes sha256 dc158146f39810aa…
+A. master only, no snapshot, no boot: OK master 4440 issues, 148-byte records, date 20261009, ohlc 0
+B. master + boot (0 base prices), no snapshot: OK master 4440 issues, 148-byte records, date 20261009, ohlc 0
+snapshot first record length: 4104 records approx: 4440
+C. master + boot + full snapshot: FAILED deque (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)

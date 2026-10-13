@@ -1,0 +1,4 @@
+G. browser-like headers (UA, extensions), same session: HTTP 502  via=- server=-
+H. G + Sec-WebSocket-Protocol: binary: HTTP 502  via=- server=-
+I. plain again after 3 s (same session): HTTP 502  via=- server=-
+J. browser-like headers, fresh session used immediately: HTTP 502  via=- server=-

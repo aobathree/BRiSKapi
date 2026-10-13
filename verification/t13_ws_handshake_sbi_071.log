@@ -1,0 +1,7 @@
+site sbi api_endpoint https://api.brisk.jp ws host api.brisk.jp path /realtime/0 query keys [ 'session' ]
+A. as the host (Origin, no cookie): HTTP 502 body 
+B. no Origin, no cookie: HTTP 502 body 
+C. Origin + site cookie: HTTP 502 body 
+D. Origin + Bearer api_token: HTTP 502 body 
+E. Origin + EIO=4&transport=websocket: HTTP 502 body 
+F. Origin, no query at all: HTTP 400 {"content-type":"text/plain","date":"Tue, 13 Oct 2026 03:34:08 GMT","via":"1.1 google","cache-control":"private, no-store","content-length":"0","alt-svc":"h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000","connection":"close"}

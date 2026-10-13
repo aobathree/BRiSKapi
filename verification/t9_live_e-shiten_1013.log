@@ -1,0 +1,12 @@
+[sbi protocol] boot: date 2026-10-13, series 0, flex_version 18000, 0 base prices, 1 exceptional special quotes, ws_url /realtime/0?session=<redacted:220> on api.brisk.jp
+Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)
+schedule: {'date': '2026-10-13', 'status': 'running', 'morning_pre_open': datetime.datetime(2026, 10, 13, 8, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST')), 'morning_open': datetime.datetime(2026, 10, 13, 9, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST')), 'morning_close': datetime.datetime(2026, 10, 13, 11, 30, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST')), 'afternoon_pre_open': datetime.datetime(2026, 10, 13, 12, 5, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST')), 'afternoon_open': datetime.datetime(2026, 10, 13, 12, 30, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST')), 'afternoon_pre_close': datetime.datetime(2026, 10, 13, 15, 25, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST')), 'afternoon_close': datetime.datetime(2026, 10, 13, 15, 30, tzinfo=datetime.timezone(datetime.timedelta(seconds=32400), 'JST'))}
+Traceback (most recent call last):
+  File "/Users/aobathree/briskapi-trial/checks/t9_live_site_070.py", line 12, in <module>
+    feed = sbi.connect(codes=["7203", "6758"], history=True, contribute=False, trace_protocol=True, share_market_data=False)
+  File "/Users/aobathree/briskapi-trial/.venv-070/lib/python3.14/site-packages/briskapi/sbi.py", line 316, in connect
+    return load(feed.ready(timeout))
+                ~~~~~~~~~~^^^^^^^^^
+  File "/Users/aobathree/briskapi-trial/.venv-070/lib/python3.14/site-packages/briskapi/_live.py", line 185, in ready
+    raise BriskError(f'Feed {self.status} before bootstrap: {self.error}')
+briskapi._recording.BriskError: Feed failed before bootstrap: Decoder exited with 1

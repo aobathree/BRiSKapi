@@ -1,0 +1,21 @@
+boot: {
+  date: '2026-10-13',
+  series: 0,
+  flex_version: 18000,
+  ws_url: 'present',
+  session_status: 'running',
+  next_date: 1791932400,
+  base_prices: 0
+}
+decoder paths: [
+  '/assets/wasm/fita.35e38ad5e3418d94a68b666eb44450ebdd0c98b5.js',
+  '/assets/wasm/fita.35e38ad5e3418d94a68b666eb44450ebdd0c98b5.wasm'
+]
+fita.js: 132,653 bytes sha256 74a9401ba57f5cc6…
+fita.wasm: 437,041 bytes sha256 8d60edb1afff9593…
+master.dat: 799,200 bytes sha256 c313ea08659ed702…
+snapshot.dat: 13,909,190 bytes sha256 97cecacbd7626768…
+A. master only, no snapshot, no boot: OK master 4440 issues, 148-byte records, date 20261013, ohlc 0
+B. master + boot (0 base prices), no snapshot: OK master 4440 issues, 148-byte records, date 20261013, ohlc 0
+snapshot first record length: 2756 records approx: 4440
+C. master + boot + full snapshot: FAILED Invalid unserialize (File:/home/runner/work/fita3/fita3/apps/fita3/fita3-cpp/fita.cc, Line:1133)

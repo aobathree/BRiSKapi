@@ -1,0 +1,42 @@
+site e-shiten api_endpoint https://api.brisk.jp ws host api.brisk.jp path /realtime/0 query keys [ 'session' ]
+A. as the host (Origin, no cookie): HTTP 502 body 
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>502 Server Error</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Server Error</h1>
+<h2>The server {"content-type":"text/html; charset=UTF-8","referrer-policy":"no-referrer","content-length":"332","date":"Tue, 13 Oct 2026 03:33:55 GMT","alt-svc":"h3=\":443\"; ma=2592000","connection":"close"}
+B. no Origin, no cookie: HTTP 502 body 
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>502 Server Error</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Server Error</h1>
+<h2>The server {"content-type":"text/html; charset=UTF-8","referrer-policy":"no-referrer","content-length":"332","date":"Tue, 13 Oct 2026 03:33:55 GMT","alt-svc":"h3=\":443\"; ma=2592000","connection":"close"}
+C. Origin + site cookie: HTTP 502 body 
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>502 Server Error</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Server Error</h1>
+<h2>The server {"content-type":"text/html; charset=UTF-8","referrer-policy":"no-referrer","content-length":"332","date":"Tue, 13 Oct 2026 03:33:55 GMT","alt-svc":"h3=\":443\"; ma=2592000","connection":"close"}
+D. Origin + Bearer api_token: HTTP 502 body 
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>502 Server Error</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Server Error</h1>
+<h2>The server {"content-type":"text/html; charset=UTF-8","referrer-policy":"no-referrer","content-length":"332","date":"Tue, 13 Oct 2026 03:33:55 GMT","alt-svc":"h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000","connection":"close"}
+E. Origin + EIO=4&transport=websocket: HTTP 502 body 
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>502 Server Error</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Server Error</h1>
+<h2>The server {"content-type":"text/html; charset=UTF-8","referrer-policy":"no-referrer","content-length":"332","date":"Tue, 13 Oct 2026 03:33:55 GMT","alt-svc":"h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000","connection":"close"}
+F. Origin, no query at all: HTTP 400 {"content-type":"text/plain","date":"Tue, 13 Oct 2026 03:33:55 GMT","via":"1.1 google","cache-control":"private, no-store","content-length":"0","alt-svc":"h3=\":443\"; ma=2592000","connection":"close"}
