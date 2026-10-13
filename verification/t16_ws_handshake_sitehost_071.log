@@ -1,0 +1,8 @@
+e-shiten: ws_url is relative; site host next.e-shiten.brisk.jp; path /realtime/0
+K. site host, Origin + site cookie: HTTP 404  via=1.1 google upgrade=- accept=-
+L. site host, Origin only: HTTP 404  via=1.1 google upgrade=- accept=-
+M. api_endpoint host, Origin only (as 0.7.1 does): HTTP 502  via=- upgrade=- accept=-
+sbi: ws_url is relative; site host sbi.brisk.jp; path /realtime/0
+K. site host, Origin + site cookie: HTTP 404  via=1.1 google upgrade=- accept=-
+L. site host, Origin only: HTTP 404  via=1.1 google upgrade=- accept=-
+M. api_endpoint host, Origin only (as 0.7.1 does): HTTP 502  via=- upgrade=- accept=-

@@ -20,3 +20,5 @@ briskapi 0.7.0 ライブ接続の切り分け（aobathree、2026-10-12〜13）
   t15_ws_handshake_ua_071.cjs   Chrome 風ヘッダー等の変種 G〜J
   t14_ws_session_identity_071.cjs  ws_url の session / api_token が boot ごとに変わるか（ハッシュ比較）
   t9_live_*_071.log             sbi.connect() の結果：schedule applied (66 price bars) → WebSocket 502
+  t16_ws_handshake_sitehost_071.cjs  サイト自身のホスト（wss://<site>/realtime/0）への Upgrade → 404。api_endpoint 側は 502
+  t17_ws_h2_connect_071.cjs          HTTP/2 拡張 CONNECT（RFC 8441）→ api.brisk.jp は enableConnectProtocol=false

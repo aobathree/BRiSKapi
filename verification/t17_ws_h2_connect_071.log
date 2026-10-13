@@ -1,0 +1,4 @@
+e-shiten: h2 to api.brisk.jp; alpn h2; enableConnectProtocol=false
+N. HTTP/2 extended CONNECT :protocol=websocket: error ERR_HTTP2_STREAM_ERROR
+sbi: h2 to api.brisk.jp; alpn h2; enableConnectProtocol=false
+N. HTTP/2 extended CONNECT :protocol=websocket: error ERR_HTTP2_STREAM_ERROR
