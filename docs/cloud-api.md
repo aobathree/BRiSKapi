@@ -293,8 +293,10 @@ client.timeseries.get_snapshot("XTKS.BRISK", at="2026-10-13T08:59:58", schema="b
   when BRiSK's stamps ran ahead of the receipt clock by more than half of `skew` (widen it, or
   records received before `end` but stamped well after it would be missing). Not for OHLCV bars.
 - `get_snapshot(dataset, at, symbols, schema="brisk-quotes", since=None, ts_filter="ts_recv", skew=10.0)`
-  returns one row per security, in `instrument_id` order: its latest record at or before `at`. BRiSK
-  sends a security's whole state on every update, so that is its book as it stood; a security with no
+  returns one row per security, in `instrument_id` order: its latest record at or before `at` (of those
+  received by `at` on the default clock, the latest by BRiSK's stamp and frame, not the last received:
+  two captures of a day can hold a security's frames in another order of receipt than the order they
+  happened in). BRiSK sends a security's whole state on every update, so that is its book as it stood; a security with no
   record since `since` (default: the JST midnight of `at`'s trading day) is absent. During the session
   pass a later `since`, or the search reads the morning.
 - A demo replay has no receipt clock: its `ts_recv` is its `ts_event`, so both filters agree there.

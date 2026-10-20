@@ -635,6 +635,16 @@ def test_get_range_can_cut_on_the_receipt_time(monkeypatch):
             client.timeseries.get_range('XTKS.BRISK', start='2026-10-13', **bad)
 
 
+def test_a_snapshot_is_the_latest_in_market_order_even_where_the_receipts_run_the_other_way(monkeypatch):
+    # Two captures (or a repaired recording) hold 7203's frame 10 as received after its frame 11: the book as it stood is frame 11's.
+    client, _ = served(monkeypatch, [(7203, 5.0, 8.0, 10), (7203, 5.5, 6.0, 11), (6758, 2.0, 2.02, 4)])
+    held = lambda **options: dict((r['instrument_id'], r['sequence'])   # noqa: E731
+                                  for r in client.timeseries.get_snapshot('XTKS.BRISK', **options))
+    assert held(at='2026-10-13T09:00:07') == {6758: 4, 7203: 11}       # frame 10 has not reached us yet
+    assert held(at='2026-10-13T09:00:09') == {6758: 4, 7203: 11}       # both have: the later frame is the book, not the later receipt
+    assert held(at='2026-10-13T09:00:09', ts_filter='ts_event') == {6758: 4, 7203: 11}
+
+
 def test_get_snapshot_is_the_latest_record_of_each_security_as_of_a_moment(monkeypatch, tmp_path):
     rows = [(7203, 1.0, 1.02, 1), (7203, 5.0, 5.02, 2), (7203, 5.5, 8.5, 3),      # 7203's third reached us at 08.5 s
             (6758, 2.0, 2.02, 4), (6758, 7.0, 7.02, 5), (167, 0.0, 0.02, 6)]

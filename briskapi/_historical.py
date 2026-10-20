@@ -267,9 +267,12 @@ class _Timeseries:
             raise ValueError('since is after at')
         table = self.get_range(dataset, floor, moment + 1, symbols, schema, ts_filter=ts_filter, skew=skew)._arrow()
         if table.num_rows:
-            last = pa.table({'k': table.column('instrument_id'), 'i': pa.array(np.arange(table.num_rows))}) \
-                .group_by('k', use_threads=False).aggregate([('i', 'max')]).column('i_max')
-            table = table.take(pa.array(np.sort(last.to_numpy()))).sort_by('instrument_id')
+            # The latest by BRiSK's stamp and frame of those received by `at`, not the last received: captures, and a repaired
+            # recording, can hold a security's frames in another order of receipt than the order they happened in.
+            table = table.sort_by([('instrument_id', 'ascending'), ('ts_event', 'ascending')]
+                                  + ([('sequence', 'ascending')] if 'sequence' in table.column_names else []))
+            ids = table.column('instrument_id').to_numpy()
+            table = table.take(pa.array(np.flatnonzero(np.concatenate([ids[1:] != ids[:-1], [True]]))))
         store = DataStore.from_table(table, schema)
         if path:
             store.to_parquet(path)
