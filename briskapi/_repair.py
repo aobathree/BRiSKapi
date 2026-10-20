@@ -9,8 +9,13 @@ with and the trades a late start restores, a SNAPSHOT. A feed that dropped and r
 (they are ONLY the other's); two feeds that see different data conflict. The same counted over blocks, a security's rows
 in a window of source time, says how much of a day two recordings could share.
 
-`repair` writes a copy of a recording with the updates and trades only another feed's recording holds added, each frame as a
-batch of its own (with the other's receipt time). What the recording holds stays as it is, so a conflict is decided for it.
+`repair` writes a copy of a recording with the updates and trades only another feed's recording holds added. A quote update the
+recording lost while it ran (it holds a later update of the security) goes in a batch of its own placed just before the batch of
+that later update, with that batch's receipt time and a market clock fitted between its neighbours': a security's updates then run
+forward in every order, by market time, frame or receipt (the update and the next tie on receipt, and the frame breaks the tie),
+and nothing is known earlier than the recording's computer knew its neighbour. A frame that follows all the recording holds of its
+security (a gap a reconnect left, or a trade) is a batch of its own with the other's receipt time. What the recording holds stays
+as it is, so a conflict is decided for it.
 Recordings that cover mostly the same time are feeds of one stretch and repair each other; recordings with different times
 (a morning's, an afternoon's) are pieces one after the other, and a repair goes as far as the next piece starts and no
 further, to close the gap a reconnect left but never to store the day twice. The result is verified like any broker recording.
@@ -37,6 +42,7 @@ from briskapi.schema import require, site_of
 SAME, CONFLICT, ONLY, OUTSIDE, SNAPSHOT = range(5)
 CLASSES = ('same', 'conflict', 'only', 'outside', 'snapshot')
 BLOCKS = ('identical', 'a_lacks', 'b_lacks', 'each_lacks', 'conflict', 'unshared')
+RANKS = 1 << 20   # a run of one security's lost updates between two of the recording's is shorter than this
 RESTORED = ('bootstrap', 'history')   # the batches that restate what came before a recording: a book, the day's trades
 _PRIME, _SHIFT, _ZERO = np.uint64(0x9E3779B97F4A7C15), np.uint64(32), np.zeros(1, np.uint64)
 
@@ -228,38 +234,66 @@ class Gaps:
     """What repair adds, security by security: the other's rows (Arrow tables, with their batches' numbers); and what it leaves."""
 
     def __init__(self):
-        self.quotes, self.trades, self.recorded = {}, {}, set()
+        self.quotes, self.trades, self.joined, self.recorded = {}, {}, {}, set()
         self.left = {'misplaced': 0, 'after_end': 0, 'restored': 0, 'not_recorded': 0}
 
     def batches(self):
-        """The other's batches that hold any of them, in order."""
+        """The other's batches that hold any of the rows added in a batch of their own, in order."""
         return sorted({int(s) for tables in (self.quotes, self.trades) for _, seq in tables.values() for s in seq})
 
+    def keys(self):
+        """The batches the joined updates go in, each as the key `after * RANKS + rank`: the batch of the recording they come before, and
+        their place in the run of one security's updates that come before it."""
+        if not self.joined:
+            return np.zeros(0, np.int64)
+        return np.unique(np.concatenate([after * RANKS + rank for _, after, rank, _ in self.joined.values()]))
 
-def fit(a, b, candidates, a_clock, b_clock, lo, hi):
-    """Which of b's rows (those in the mask `candidates`) can be added among a's: inside a's range `lo`..`hi`, after a's first
-    row of the security, and between the rows around it in frame, time and batch clock, so that adding it breaks no order the
-    archive checks (a security with none of a's rows has none to keep in order with). Returns their mask, how many in range do not fit and how many are out of range."""
+    def count(self, tables):
+        return sum(len(rows) for rows, *_ in tables.values())
+
+    def empty(self):
+        return not (self.quotes or self.trades or self.joined)
+
+
+def fit(a, b, candidates, a_clock, b_clock, lo, hi, joining=False):
+    """Where b's rows (those in the mask `candidates`) can be added among a's: inside a's range `lo`..`hi`, after a's first row of
+    the security, and in order with the rows around them in frame and time, so that adding them breaks no order the archive
+    checks (a security with none of a's rows has none to keep in order with). Returns (a mask of the rows that go in a batch of
+    their own, which batch of a's each of the rest comes before (an array, -1 for none), the place of each of those in the run of
+    rows that come before the same batch of a's, how many in range do not fit, how many are out of range).
+
+    With `joining`, a row that a later row of the security follows in a goes in a batch just before that row's (`write` fits it a
+    market clock between its neighbours' and gives it that batch's receipt time), whatever the two feeds' batch clocks and
+    receipt clocks were: a batch holds one update of a security, so there is no room in the batch of either neighbour, and
+    the other feed's own batch clock may lie after that of the row that follows. Any other row goes in a batch of its own, where
+    its batch clock lies from that of the row before it in a (the same clock is fine) up to, but not including, that of the row
+    after it: at the same clock a batch of its own would come after that row's batch."""
     at = np.flatnonzero(candidates)
     frame, time, clk = b.frame[at], b.time[at], b_clock[at]
     inside = (clk >= lo) & (clk <= hi)
+    own, join, rank = np.zeros(len(candidates), bool), np.full(len(candidates), -1, np.int64), np.zeros(len(candidates), np.int64)
     if not len(a):   # nothing of the security's to keep in order with
-        out = np.zeros(len(candidates), bool)
-        out[at[inside]] = True
-        return out, 0, int((~inside).sum())
+        own[at[inside]] = True
+        return own, join, rank, 0, int((~inside).sum())
     place = np.searchsorted(a.frame, frame)
     before, after = np.maximum(place - 1, 0), np.minimum(place, len(a) - 1)
     last = place == len(a)
-    fits = ((place > 0) & (a.time[before] <= time) & (a_clock[before] <= clk)
-            & (last | ((time <= a.time[after]) & (clk <= a_clock[after]))))
-    out = np.zeros(len(candidates), bool)
-    out[at[inside & fits]] = True
-    return out, int((inside & ~fits).sum()), int((~inside).sum())
+    ok = inside & (place > 0) & (a.time[before] <= time) & (last | (time <= a.time[after]))
+    joins = ok & ~last & joining
+    alone = ok & ~joins & (a_clock[before] <= clk) & (last | (clk < a_clock[after]))
+    own[at[alone]] = True
+    j = np.flatnonzero(joins)
+    if len(j):
+        join[at[j]] = a.seq[after[j]]
+        starts = np.concatenate([[0], np.flatnonzero(place[j][1:] != place[j][:-1]) + 1])   # rows are in frame order: runs are runs
+        rank[at[j]] = np.arange(len(j)) - np.repeat(starts, np.diff(np.concatenate([starts, [len(j)]])))
+    return own, join, rank, int((inside & ~(alone | joins)).sum()), int((~inside).sum())
 
 
 def gather(gaps, kind, issue, a, b, b_class, side_a, side_b, hi):
     """Add this security's rows from b that a lacks, as repair would: b's ONLY rows (classified against a's range extended to `hi`)
-    that fit among a's."""
+    that fit among a's, each in a batch of its own: a quote update that a later one of its security follows in a, just before the
+    batch of that later one (see `fit`)."""
     only = b_class == ONLY
     if not only.any():
         return
@@ -270,12 +304,18 @@ def gather(gaps, kind, issue, a, b, b_class, side_a, side_b, hi):
     gaps.left['restored'] += int((only & restored).sum())
     if kind == 'trades':   # restored trades are in an order of their own: only the executions are neighbours
         a = a.only(~side_a.restored(a.seq))
-    fits, misplaced, outside = fit(a, b, only & ~restored, side_a.clock[a.seq], side_b.clock[b.seq], side_a.lo, hi)
-    gaps.left['misplaced'] += misplaced
+    own, join, rank, misplaced, outside = fit(a, b, only & ~restored, side_a.clock[a.seq], side_b.clock[b.seq], side_a.lo, hi,
+                                              joining=kind == 'quotes')
+    early = (join >= 0) & (join < side_a.restoring)   # never before the book and history that open a recording
+    join[early] = -1
+    gaps.left['misplaced'] += misplaced + int(early.sum())
     gaps.left['after_end'] += outside
-    if fits.any():
-        take = np.flatnonzero(fits)
+    if own.any():
+        take = np.flatnonzero(own)
         (gaps.quotes if kind == 'quotes' else gaps.trades)[issue] = (b.table.take(pa.array(take)), b.seq[take])
+    if (join >= 0).any():
+        take = np.flatnonzero(join >= 0)
+        gaps.joined[issue] = (b.table.take(pa.array(take)), join[take], rank[take], b.time[take])
 
 
 def scan(a, b, window, snapshots=True, until=None):
@@ -296,18 +336,40 @@ def scan(a, b, window, snapshots=True, until=None):
     return tallies, gaps
 
 
-def renumber(a, b, seqs):
-    """How the batches go once the other's `seqs` are added to a's: (a's batches' numbers in the result, and the other's by their
-    number in b). An added batch goes after the batches of a that are not later than it, never among the book and history that open
-    a recording, and never after its end."""
-    n = len(a.batches)
+def twins(a, gaps):
+    """The batches that the updates joined to a (`gaps.joined`) go in, one for each key of `gaps.keys()`: (the keys, the batch of a
+    that each comes before, each one's market clock). A clock is the latest of the batch before that place, the times of the
+    updates it holds and the clock of the one before it in the same place (so that the clocks do not go back), and not later
+    than the batch it comes before: an update's time is no later than that of the next update of its security, which is no later
+    than its batch's clock."""
+    keys = gaps.keys()
+    if not len(keys):
+        return keys, keys, keys
+    key = np.concatenate([after * RANKS + rank for _, after, rank, _ in gaps.joined.values()])
+    time = np.concatenate([time for *_, time in gaps.joined.values()])
+    latest = np.zeros(len(keys), np.int64)
+    np.maximum.at(latest, np.searchsorted(keys, key), time)
+    before = keys // RANKS
+    floor = np.maximum(a.clock[before - 1], latest)
+    group = np.cumsum(np.concatenate([[True], before[1:] != before[:-1]])) * (1 << 40)   # a running maximum within each place
+    return keys, before, np.maximum.accumulate(floor + group) - group
+
+
+def renumber(a, b, seqs, before=(), clocks=()):
+    """How the batches go once the other's `seqs` are added to a's, and a batch is made before each batch of a in `before` (with the
+    market clock in `clocks`): (a's batches' numbers in the result, and the added ones' by the other's number in b, then, from
+    the number of b's batches on, by their place in `before`). A batch of the other's goes after the batches of a that are not
+    later than it, never among the book and history that open a recording, and never after its end."""
+    n, nb = len(a.batches), len(b.batches)
     seqs = np.array(seqs, np.int64)
-    clocks = b.clock[seqs]
-    place = np.clip(np.searchsorted(a.clock, clocks, 'right'), a.restoring, n - 1)
-    rank = np.empty(len(seqs), np.int64)
-    rank[np.lexsort((seqs, clocks, place))] = np.arange(len(seqs))
+    place = np.concatenate([np.clip(np.searchsorted(a.clock, b.clock[seqs], 'right'), a.restoring, n - 1),
+                            np.asarray(before, np.int64)])
+    numbers = np.concatenate([seqs, nb + np.arange(len(before))])
+    times = np.concatenate([b.clock[seqs], np.asarray(clocks, np.int64)])
+    rank = np.empty(len(numbers), np.int64)
+    rank[np.lexsort((numbers, times, place))] = np.arange(len(numbers))
     kept = np.arange(n) + np.searchsorted(np.sort(place), np.arange(n), 'right')
-    return kept, dict(zip(seqs.tolist(), (place + rank).tolist()))
+    return kept, dict(zip(numbers.tolist(), (place + rank).tolist()))
 
 
 class Writer:
@@ -350,14 +412,14 @@ def with_issues(chunks, extra):
         yield issue, None
 
 
-def merged(table, seq, added, numbers):
-    """A security's rows (`table`, or None for none, in batches `seq` already renumbered) with the other's `added` ((rows, their
-    batches), or None) among them, the batches renumbered by `numbers` (indexed by the other's numbers), in batch order."""
+def merged(table, seq, extra):
+    """A security's rows (`table`, or None for none, in batches `seq` already renumbered) with the other's rows among them: `extra`
+    is a list of (rows, their batches' new numbers), in batch order."""
     if table is None:
-        table, seq = added[0], numbers[added[1]]
-    elif added is not None:
-        table = pa.concat_tables([table, added[0]])
-        seq = np.concatenate([seq, numbers[added[1]]])
+        table, seq = extra[0]
+        extra = extra[1:]
+    if extra:
+        table, seq = pa.concat_tables([table, *(rows for rows, _ in extra)]), np.concatenate([seq, *(new for _, new in extra)])
         order = np.argsort(seq, kind='stable')
         table, seq = table.take(pa.array(order)), seq[order]
     return table.set_column(table.schema.get_field_index('seq'), table.schema.field('seq'), pa.array(seq, pa.uint64()))
@@ -367,15 +429,21 @@ def write(a, b, gaps, output):
     """Write a with the rows of `gaps` added (from b) as a recording in `output`. Returns the number of batches added."""
     output = Path(output)
     (output / 'data' / 'custom').mkdir(parents=True, exist_ok=True)
-    kept, added = renumber(a, b, gaps.batches())
-    numbers = np.zeros(len(b.batches), np.int64)
+    keys, before, clocks = twins(a, gaps)
+    kept, added = renumber(a, b, gaps.batches(), before, clocks)
+    nb = len(b.batches)
+    numbers = np.zeros(nb + len(keys), np.int64)
     for seq, new in added.items():
         numbers[seq] = new
-    for source, tables in ((DEPTHS, gaps.quotes), (TRADES, gaps.trades)):
+    for source, tables, joins in ((DEPTHS, gaps.quotes, gaps.joined), (TRADES, gaps.trades, {})):
         writer = Writer(output / source, source)
         try:
-            for issue, table in with_issues(by_issue(a.directory / source), tables):
-                writer.add(merged(table, None if table is None else kept[table.column('seq').to_numpy()], tables.get(issue), numbers))
+            for issue, table in with_issues(by_issue(a.directory / source), {*tables, *joins}):
+                extra = [(rows, numbers[seqs]) for rows, seqs in [tables[issue]]] if issue in tables else []
+                if issue in joins:
+                    rows, after, rank, _ = joins[issue]
+                    extra.append((rows, numbers[nb + np.searchsorted(keys, after * RANKS + rank)]))
+                writer.add(merged(table, None if table is None else kept[table.column('seq').to_numpy()], extra))
         except BaseException:
             writer.writer.close()
             raise
@@ -384,12 +452,16 @@ def write(a, b, gaps, output):
     for old, new in enumerate(kept.tolist()):
         batches[new] = {**a.batches[old], 'seq': new}
     for seq, new in added.items():
-        original = b.batches[seq]
-        require(original['type'] == 'quotes', "Only a frame's own batch can be added")
-        batches[new] = {**{k: original[k] for k in ('type', 'source_time_us', 'received_unix_ms', 'decode_ns', 'replay_lateness_ms')},
-                        'seq': new}
+        if seq < nb:
+            original = b.batches[seq]
+            require(original['type'] == 'quotes', "Only a frame's own batch can be added")
+            batches[new] = {**{k: original[k] for k in ('type', 'source_time_us', 'received_unix_ms', 'decode_ns', 'replay_lateness_ms')},
+                            'seq': new}
+        else:   # a batch before the recording's next update of a security: that batch's receipt and timing, the clock fitted
+            batches[new] = {**{k: a.batches[before[seq - nb]][k] for k in ('type', 'received_unix_ms', 'decode_ns', 'replay_lateness_ms')},
+                            'source_time_us': int(clocks[seq - nb]), 'seq': new}
     end = batches[-1]
-    end.update(frames=end['frames'] + len(added), quote_updates=end['quote_updates'] + sum(len(t) for t, _ in gaps.quotes.values()),
+    end.update(frames=end['frames'] + len(added), quote_updates=end['quote_updates'] + gaps.count(gaps.quotes) + gaps.count(gaps.joined),
                source_time_us=max(end['source_time_us'], *(batches[new]['source_time_us'] for new in added.values()), 0))
     table = _parquet.Columns(None, None, None, [], batches, None, None)._batches(a.midnight)
     pq.write_table(table, output / _parquet.BATCHES, row_group_size=ROW_GROUP, **_parquet.options(_parquet.BATCHES))
@@ -476,12 +548,12 @@ def _run(target, partners, reach, window, deliver, work):
         # What one lacks can be told only if the two number their frames alike: then most of the other's updates that this has a
         # frame of are the same, not other content under the same number.
         match = theirs['same'] > theirs['conflict'] or not (theirs['same'] or theirs['conflict'] or theirs['only'])
-        comparison['repair'] = {'quotes': sum(len(t) for t, _ in gaps.quotes.values()),
-                                'trades': sum(len(t) for t, _ in gaps.trades.values()), 'batches': len(gaps.batches()),
-                                'securities': len(set(gaps.quotes) | set(gaps.trades)), 'left_out': gaps.left,
+        comparison['repair'] = {'quotes': gaps.count(gaps.quotes) + gaps.count(gaps.joined), 'trades': gaps.count(gaps.trades),
+                                'borrowed_receipt': gaps.count(gaps.joined), 'batches': len(gaps.batches()) + len(gaps.keys()),
+                                'securities': len(set(gaps.quotes) | set(gaps.trades) | set(gaps.joined)), 'left_out': gaps.left,
                                 'frame_numbers_match': match}
         entry['sources'].append({'path': str(partner.directory), **comparison})
-        if deliver is not None and match and gaps.batches():
+        if deliver is not None and match and not gaps.empty():
             passes += 1
             write(current, partner, gaps, work / str(passes))
             current = Side(work / str(passes))
@@ -497,8 +569,8 @@ def _run(target, partners, reach, window, deliver, work):
 def repair(recordings, others, deliver=None, until=None, window=5.0, work=None):
     """Repair recordings from other feeds' recordings of the same day, adding what only they hold. `recordings` and `others` are
     folders of recordings, or of folders of them (a `brisk live --output` folder): a recording is repaired from each of the others
-    that covers mostly the same time (OVERLAP; see `plan`), adding its quote updates and trades the recording lacks, each frame as a
-    batch of its own with the other's receipt time, among its own. Nothing is changed or removed: where two disagree, the recording
+    that covers mostly the same time (OVERLAP; see `plan`), adding its quote updates and trades the recording lacks in batches of
+    their own among its own (see the module docstring for where they go and what receipt time they carry). Nothing is changed or removed: where two disagree, the recording
     stands. Only frames within the recording's own range of source time are added, and, where another recording follows it, those
     up to where that begins (closing the gap a reconnect left); `until` (a time of day, for one recording) goes further where
     nothing follows, as when a feed stopped early. Of a pair that does not number its frames alike nothing is added.
@@ -506,8 +578,9 @@ def repair(recordings, others, deliver=None, until=None, window=5.0, work=None):
     `deliver(recording, tables, entry)` is called with the folder holding each repaired recording's tables, which are removed after
     (written under `work`, a folder on the output's disk); with none, nothing is written and the report says what would be.
     Returns {'recordings': [...]}: for each, its range, how far a repair may reach, and for each source the comparison (rows by
-    class, blocks by status) and what was added: quotes, trades, batches, securities, and what was left out and why (`misplaced`: the
-    frame does not fit the order of the recording's own rows around it; `after_end`: past its range; `restored`: only in the other's
+    class, blocks by status) and what was added: quotes, trades, batches, securities, `borrowed_receipt` (the quote updates that
+    have the receipt time of the recording's next update of their security) and what was left out and why (`misplaced`: the
+    frame does not fit the order of the recording's own rows around it in frame and time; `after_end`: past its range; `restored`: only in the other's
     opening book or restored trades, which carry no receipt time; `not_recorded`: of securities the recording does not have)."""
     loaded = {}
 

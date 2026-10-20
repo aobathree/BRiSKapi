@@ -523,16 +523,23 @@ brisk repair days/sbi --from days/eshiten --output days/repaired    # folders of
   (the other was running and lacks them), *conflict* (the other has that frame with other content) and *outside*
   (before the other started or after it ended); and of its blocks (a security over `--window` minutes, 5 by default),
   how many are identical, lack something the other has, are lacking on both sides, or conflict.
-- **What it writes.** Your recording as it is, plus each frame only the other holds, as a batch of its own among yours;
+- **What it writes.** Your recording as it is, plus what only the other holds, in batches of their own among yours;
   checked as the archive checks a broker's recording and packaged, so `brisk upload` takes it. Where the two disagree
-  yours stands. A recording that gains nothing is not written; one recording's goes into `--output`, several into a folder
-  of them by name.
+  yours stands. An update that would run backwards in time among your recording's own is counted under `left_out` in the
+  report and not added. A recording that gains nothing is not written; one recording's goes into `--output`, several into
+  a folder of them by name.
 - **How far it reaches.** Only frames within your recording's own time are added, except where another recording of the
   day follows it (a piece you gave, in a folder or on the command line): the gap before that one is closed, up to a
   microsecond before it starts and never into it, so no time is stored twice. A recording nothing is known to follow is not
   extended; for one such (a feed that stopped early) `--until 15:30:00` (Tokyo's) goes that far, but not into a recording
   that follows.
-- **Receipt times.** Added frames keep the other recording's receipt time (its computer's clock); yours keep yours.
+- **Receipt times.** An update your recording lost while it ran (it holds a later update of that security) goes in a batch of its
+  own just before the batch of that later update, with that batch's receipt time: a security's updates then run forward in
+  market time, in frame and in receipt time alike, and none counts as received before your computer knew the next one. The
+  report's `borrowed_receipt` counts them. (A batch holds one update of a security, so the neighbours' batches have no room; and
+  the other feed's own batch clock can lie after your next update's, because one feed can run tens of milliseconds behind the
+  other.) What follows everything your recording holds of a security (the gap before the next piece, a feed that stopped
+  early) and the trades go in batches of the other's own, with its receipt time (its computer's clock); yours keep yours.
 - **When it refuses.** If a pair does not number its frames alike (most of the other's updates that yours has a frame
   of must be the same), no frame says what is missing: it counts and writes nothing. Recordings must be of the same day
   and in the current format (briskapi 1.5 or later), and the ones repaired must have ended. No recording is ever changed.
@@ -684,8 +691,8 @@ The server cuts on BRiSK's stamp (`ts_event`); a live feed's records reach your 
 later (`ts_recv`). For a test that must not look ahead, `ts_filter='ts_recv'` cuts and sorts on
 the receipt time (it asks for `skew` seconds either side and says if the stamps ran further ahead
 than that allows), and `get_snapshot(dataset, at, symbols='ALL_SYMBOLS', schema='brisk-quotes',
-since=None)` returns each security's latest record as of `at` (by receipt time unless
-`ts_filter='ts_event'`), one row per security. `client.metadata` has
+since=None)` returns each security's latest record as of `at` (of those received by `at`, unless
+`ts_filter='ts_event'`; the latest by stamp and frame, not the last received), one row per security. `client.metadata` has
 `list_datasets()`, `list_schemas(dataset)`, `list_fields(schema)`, `list_publishers()`,
 `get_dataset_range(dataset)`, `get_dataset_condition(dataset, start_date, end_date)` (each date
 available or missing, and the clock windows your recordings cover, in JST),

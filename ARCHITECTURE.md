@@ -1190,14 +1190,36 @@ would give the second piece's time twice. With nothing known to follow, a target
 goes as far as it says, and is refused if it passes the start of a following recording.
 
 A row of OTHER is added when it is ONLY its own, its batch is a `quotes` batch (not the opening book or the day's restored
-trades, which have no receipt time), and it fits: its batch clock is within the target's range (extended to `reach`) and it
-falls between the rows around it of that security in frame, source time and batch clock, which is what the archive's order
-rules need (`fit`). Each added frame becomes a batch of its own, `quotes` with OTHER's `received_unix_ms` and `decode_ns`,
-put after the last batch of the target that is not later than it, never among the book and history that open a recording
-and never after its end; the batches are renumbered (`renumber`), and the end's `frames`, `quote_updates` and, if frames
-were added past it, clock are brought up to date. What was left out is counted: `misplaced` (does not fit), `after_end`,
-`restored` and `not_recorded` (a security the target does not hold; one it holds but has no trade of is not that). The
-target's own rows are never changed: a conflict stands as the target has it. A target that gains nothing is not written.
+trades, which have no receipt time), its batch clock is within the target's range (extended to `reach`), and it is in order
+among the rows around it of that security in frame and source time (`fit`). Where it goes depends on what follows it:
+
+- A quote update that a later update of its security follows in the target goes in a `quotes` batch of its own placed just
+  before the batch of that later update, with that batch's `received_unix_ms`, `decode_ns` and `replay_lateness_ms`
+  (`twins`; one batch for each (the batch it comes before, its place in the run of lost updates of one security that come
+  before that batch), and so at most about as many batches as the target has). The batch's market clock is the latest of the
+  clock of the batch before it, the times of the updates in it and the previous such batch's, so that clocks do not go
+  back; it is never later than the batch it comes before (an update's time is no later than the next update's, which is no
+  later than that batch's clock). Why not OTHER's batch where its clock fits, as 1.8.0 did: the archive's canonical form
+  holds at most one quote of a security in a batch (rows are strictly sorted by issue, then batch), so the batches of the
+  two neighbours have no room; OTHER's batch clock need not lie between theirs (the feeds batch and stamp differently, and
+  one can run tens of milliseconds behind the other: about a third of the missing updates of the first real pair did
+  not fit); and OTHER's receipt time can be later than the target's receipt of the next update, which a query in receipt
+  order (`get_range(ts_filter='ts_recv')`: receipt, then `ts_event`, then `sequence`) would put after it, so that
+  `get_snapshot` returned the older one. With the next update's receipt time the two tie, and stamp and frame put the lost
+  one first: forward in every order, and nothing received before the target's computer could know its neighbour. The
+  report's `borrowed_receipt` counts these updates.
+- Any other row (after the target's last row of its security, as in the gap before the next piece or past a feed that
+  stopped early; a trade; a security with none of the target's rows) becomes a batch of OTHER's own, `quotes` with OTHER's
+  `received_unix_ms` and `decode_ns`, put after the last batch of the target that is not later than its clock. With a row
+  after it a batch of its own must come strictly before that row's batch (at the same clock it would come after it, and the
+  frame order would break), which only a trade can still need.
+
+Added batches never go among the book and history that open a recording and never after its end; the batches are renumbered
+(`renumber`), and the end's `frames`, `quote_updates` and, if frames were added past it, clock are brought up to date. What was
+left out is counted: `misplaced` (not in order in frame and time, or a quote update past the target's last row of its
+security whose clock is before that row's batch), `after_end`, `restored` and `not_recorded` (a security the target does
+not hold; one it holds but has no trade of is not that). The target's own rows are never changed: a conflict stands as the
+target has it. A target that gains nothing is not written.
 
 The tables are written the way `Columns.write` does, but a security at a time: RECORDING's rows with the added ones merged
 in batch order and their `seq` renumbered, buffered into row groups of exactly `ROW_GROUP` rows, the equity table copied.
@@ -1209,13 +1231,13 @@ decoder gives (as the cloud API's merging of overlapping recordings also assumes
 brokers on live data. Repair therefore refuses to write (`frame_numbers_match`) unless most of OTHER's updates that
 RECORDING has a frame of are the same, not other content under that number: a pair numbered differently would otherwise have
 each other's rows added again under other numbers. `tests/test_repair.py` builds feeds that lose frames, start late,
-disagree, record a subset of securities or number differently, are cut into pieces (a reconnect, a morning and an afternoon) and
-repaired from several, and checks each repair against a feed that lost nothing.
+disagree, stamp their batches differently (at the next batch's clock, later or earlier), record a subset of securities or
+number differently, are cut into pieces (a reconnect, a morning and an afternoon) and repaired from several, and checks each repair against a feed that lost nothing.
 
 Not done: a conflict resolved in OTHER's favour; frames that only OTHER's opening book or restored trades hold (they carry no
 receipt time to give a batch); and a gap before a recording's start (its opening book restates the state, not the updates
-before it). Receipt times of added batches are another computer's clock, so a recording's receipt clock is not steady across
-them (the archive checks only that they stay within a day of the first). Report-only runs (no `--output`) compare each partner with
+before it). Receipt times of the batches of OTHER's own (past a security's last row, trades) are another computer's clock, so a
+recording's receipt clock is not steady across them (the archive checks only that they stay within a day of the first). Report-only runs (no `--output`) compare each partner with
 the original target, as nothing is written for the next pass to start from, so a frame two partners both hold is counted for each.
 
 ## Private archive
@@ -1653,9 +1675,10 @@ known to be the exchange's, and the two computers' clocks are not synchronised, 
 before `end` can carry a stamp after `end + skew`; the client warns when the largest
 `ts_event - ts_recv` it sees passes half of `skew`, the only evidence it has of a window too narrow.
 `get_snapshot(at, since=None, ...)` calls `get_range` on [`since`, `at` + 1 ns) (`since` defaults to the
-JST midnight of `at`'s trading day) and keeps each `instrument_id`'s last row in that order: BRiSK
-sends a security's whole state on every update, so the last record is its state, and a security with
-none in the window is absent. Bars have no receipt time, so both refuse them.
+JST midnight of `at`'s trading day) and keeps each `instrument_id`'s latest row by `ts_event` and `sequence`, not the
+last in receipt order: two captures, or a repaired recording, can hold a security's frames in another order of receipt than
+the order they happened in (1.8.1; before it a snapshot could return the older frame). BRiSK sends a security's whole state
+on every update, so that record is its state, and a security with none in the window is absent. Bars have no receipt time, so both refuse them.
 
 ## Development and deployment
 

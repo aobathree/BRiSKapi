@@ -89,6 +89,20 @@ def fingerprint(directory):
     return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in _parquet.FILES}
 
 
+def forward(columns):
+    """Every security's updates run forward in the recording, in every order a query puts them in: one to a batch, the batches in
+    order, and sorted by receipt time, then market time, then frame (the order of a receipt-time query), the frames still go up."""
+    q = columns.q
+    received = np.array([b.get('received_unix_ms') or 0 for b in columns.batches])
+    clocks = np.array([b['source_time_us'] for b in columns.batches])
+    assert (np.diff(clocks) >= 0).all() and (clocks[q['seq']] >= q['source_time_us']).all()
+    for issue in set(q['issue_id'].tolist()):
+        rows = np.flatnonzero(q['issue_id'] == issue)
+        assert (np.diff(q['seq'][rows]) > 0).all() and (np.diff(q['frame'][rows]) >= 0).all()
+        order = np.lexsort((q['frame'][rows], q['source_time_us'][rows], received[q['seq'][rows]]))
+        assert (np.diff(q['frame'][rows][order]) >= 0).all(), f'security {issue} runs backwards in receipt order'
+
+
 def repair(a, b, output=None, **options):
     """`cli.repair` of one recording from one other: its entry with the one source's comparison merged in, as a report."""
     entry = cli.repair([a], [b], output, **options)['recordings'][0]
@@ -130,28 +144,88 @@ def test_frames_a_feed_lost_are_added_from_the_other_with_its_receipt_time(tmp_p
     assert (report['repair']['quotes'], report['repair']['trades']) == (quotes, trade_rows) == (6, 4)
     # A frame that changed nothing (41) left no batch to be missed: only the four with updates or trades come back.
     held = sorted(f for f in gone if updates(f) or trades(f))
-    assert held == [20, 21, 22, 40] and report['repair']['batches'] == 4 and report['repair']['left_out'] == dict.fromkeys(
-        ('misplaced', 'after_end', 'restored', 'not_recorded'), 0)
+    assert held == [20, 21, 22, 40]
+    # A lost update goes in a batch of its own just before the batch of its security's next update (the same place, the same batch),
+    # and a frame's trades in the other's own batch: 7203's updates of frames 20 and 22 and 9984's and 6758's of 20 and 21 come before
+    # 24's batch (two batches, the second for 7203's second), 7203's of 40 before 42's and 9984's before 44's: four batches for the six
+    # updates, and a batch each for the trades of frames 20 and 40.
+    assert (report['repair']['borrowed_receipt'], report['repair']['batches']) == (6, 6)
+    assert report['repair']['left_out'] == dict.fromkeys(('misplaced', 'after_end', 'restored', 'not_recorded'), 0)
     assert report['quotes']['rows']['b']['only'] == quotes and report['quotes']['rows']['a']['only'] == 0
     assert report['quotes']['blocks']['a_lacks'] >= 1 and report['quotes']['blocks']['conflict'] == 0
     # What it holds is now what a feed that lost nothing holds, ...
     got, expected = rows(tmp_path / 'repaired'), rows(whole)
     assert got[0] == expected[0] and got[1] == expected[1]
-    # ... in batches that are the archive's to verify, each lost frame a batch of its own with the other's receipt time.
+    # ... in batches that are the archive's to verify, in which every security runs forward.
     columns = got[2]
-    assert [b['seq'] for b in columns.batches] == list(range(len(columns.batches))) == list(range(len(expected[2].batches) - 1))
-    clocks = [b['source_time_us'] for b in columns.batches]
-    assert clocks == sorted(clocks)
-    received = {b['source_time_us']: b['received_unix_ms'] - 1773187200000 - b['source_time_us'] // 1000
-                for b in columns.batches if b['type'] == 'quotes'}
-    assert {received[clock(f)] for f in held} == {7} and {received[clock(f)] for f in set(range(1, 81)) - gone} == {0}
+    assert [b['seq'] for b in columns.batches] == list(range(len(columns.batches))) == list(range(len(expected[2].batches) + 1))   # 5 lost batches, 6 made
+    forward(columns)
+    # An update's receipt time is that of the next update of its security the recording holds.
+    q = columns.q
+    receipt = {int(b['seq']): b['received_unix_ms'] for b in columns.batches if b['type'] == 'quotes'}
+    at = lambda issue, frame: receipt[int(q['seq'][(q['issue_id'] == issue) & (q['frame'] == frame)][0])]
+    for issue, frame, next_frame in ((0, 20, 24), (0, 22, 24), (2, 20, 24), (1, 21, 24), (0, 40, 42), (2, 40, 44)):
+        assert at(issue, frame) == at(issue, next_frame) == 1773187200000 + clock(next_frame) // 1000
     # Its end counts what it holds: the frames it received and the ones it was given, and every update.
     end, whole_end = columns.batches[-1], expected[2].batches[-1]
-    assert end['frames'] == whole_end['frames'] - 1 and end['quote_updates'] == whole_end['quote_updates']
+    assert end['frames'] == whole_end['frames'] - 5 + report['repair']['batches'] and end['quote_updates'] == whole_end['quote_updates']
     assert {k: v for k, v in end.items() if k not in ('frames', 'seq')} == {k: v for k, v in whole_end.items() if k not in ('frames', 'seq')}
     assert report['package']['summary'] == _parquet.verify_broker(tmp_path / 'repaired')
     assert report['package']['summary']['quote_updates'] == expected[2].batches[-1]['quote_updates'] + len(ISSUES)   # and the opening book
     assert json.loads((tmp_path / 'repaired' / 'manifest.json').read_text()) == report['package']
+
+
+def stamped(first, last):
+    """`spoil` for a feed that stamps the batches of frames first..last with the market clock of `last`, as one that sends a few frames
+    together does (each update keeps its own time)."""
+    def spoil(batches):
+        for batch in batches:
+            if batch['type'] == 'quotes' and first <= (batch['source_time_us'] - OPEN_US) // TICK <= last:
+                batch['source_time_us'] = clock(last)
+    return spoil
+
+
+def later(ticks):
+    """`spoil` for a feed whose batches all carry a market clock `ticks` frames later than their frames' own."""
+    def spoil(batches):
+        for batch in batches:
+            if batch['type'] in ('quotes', 'end'):
+                batch['source_time_us'] += ticks * TICK
+    return spoil
+
+
+@pytest.mark.parametrize('a_spoil, b_spoil', [
+    (None, stamped(20, 22)),     # the other's batch of frame 20 has the clock of the batch of 22 that a holds
+    (stamped(18, 21), None),     # a's batches around the lost update were stamped later than the other's
+    (None, later(3)),            # all of the other's clocks run later than a's, as a feed behind it would
+], ids=['same clock as the next', 'a stamped later', 'the other later'])
+def test_a_lost_update_is_added_whatever_the_batch_clocks_of_the_two_feeds_say(tmp_path, group, a_spoil, b_spoil):
+    a = package(tmp_path, 'a', 0, 80, drop={20}, spoil=a_spoil)
+    b = package(tmp_path, 'b', 0, 80, received=250, site='e-shiten', spoil=b_spoil)   # 250 ms: the other receives it later than a's next
+    whole = rows(package(tmp_path, 'whole', 0, 80))
+    report = repair(a, b, tmp_path / 'repaired')
+    assert report['repair']['quotes'] == len(updates(20)) == report['repair']['borrowed_receipt']
+    assert report['repair']['left_out'] == dict.fromkeys(('misplaced', 'after_end', 'restored', 'not_recorded'), 0)
+    got = rows(tmp_path / 'repaired')
+    assert got[0] == whole[0] and got[1] == whole[1]
+    forward(got[2])   # in every order, though the other received the update after a had received the next one
+    assert report['package']['summary'] == _parquet.verify_broker(tmp_path / 'repaired')
+
+
+def test_a_lost_update_that_would_have_to_come_before_its_neighbours_time_is_left_out(tmp_path):
+    # a's own 7203 update of frame 22 is stamped before the other's of frame 20 (a conflict of its own): the other's 20 would run
+    # backwards in time before it, so it is not added; 9984's update of the frame, whose neighbours agree, is.
+    def early(batches):
+        for batch in batches:
+            for q in batch.get('quotes', []):
+                if batch['source_time_us'] == clock(22) and q['issue_id'] == 0 and batch['type'] == 'quotes':
+                    q['source_time_us'] = clock(19)
+    a = package(tmp_path, 'a', 0, 80, drop={20}, spoil=early)
+    b = package(tmp_path, 'b', 0, 80, received=7, site='e-shiten')
+    report = repair(a, b, tmp_path / 'repaired')
+    assert report['repair']['quotes'] == 1 and report['repair']['left_out']['misplaced'] == 1
+    assert (2, 20) in rows(tmp_path / 'repaired')[0] and (0, 20) not in rows(tmp_path / 'repaired')[0]
+    forward(rows(tmp_path / 'repaired')[2])
 
 
 def test_with_no_output_the_report_says_what_would_be_added_and_nothing_is_written(tmp_path):
@@ -169,7 +243,7 @@ def test_two_feeds_that_see_a_frame_differently_keep_each_their_own(tmp_path, gr
     report = repair(a, b, tmp_path / 'repaired')
     assert report['quotes']['rows']['a']['conflict'] == report['quotes']['rows']['b']['conflict'] == 2
     assert report['quotes']['blocks']['conflict'] >= 1
-    assert report['repair']['quotes'] == len(updates(50)) and report['repair']['batches'] == 1
+    assert report['repair']['quotes'] == len(updates(50)) and report['repair']['batches'] == 2   # the update's and the trades'
     got = rows(tmp_path / 'repaired')
     assert got[0] == whole[0] and got[0][(0, 30)]['last_price10'] == 10_000 + 7 * 30   # a's, not b's
     assert report['package']['summary']['quote_updates'] == len(whole[2])
@@ -224,6 +298,11 @@ def test_the_gap_a_reconnect_leaves_between_two_recordings_is_closed_up_to_where
     got, expected = rows(tmp_path / 'closed' / 'first'), rows(whole)
     assert got[0] == expected[0] and got[1] == expected[1] and max(f for _, f in got[0]) == 52   # frame 53 changed nothing
     assert got[2].batches[-1]['source_time_us'] <= clock(54) - 1
+    # What follows everything the first recording holds of a security is a batch of the other's own, with its receipt time (7).
+    tail = {b['received_unix_ms'] - 1773187200000 - b['source_time_us'] // 1000 for b in got[2].batches
+            if b['type'] == 'quotes' and b['source_time_us'] > clock(40)}
+    assert tail == {7}
+    forward(got[2])
     assert {k for k in got[0] if k[1] >= 54} == set()   # none of what the second recording holds is in the first
     # An `until` that goes into the next recording is refused, and so is one for several recordings at once.
     with pytest.raises(ValueError, match='store that time twice'):
@@ -252,7 +331,7 @@ def test_a_recording_is_repaired_from_every_recording_that_covers_its_time(tmp_p
     early, late = package(tmp_path, 'early', 0, 40, received=7), package(tmp_path, 'late', 40, 80, received=9)
     result = cli.repair([a], [early, late], tmp_path / 'repaired')
     entry = result['recordings'][0]
-    assert [source['repair']['batches'] for source in entry['sources']] == [1, 1] and entry['written']
+    assert [source['repair']['batches'] for source in entry['sources']] == [3, 4] and entry['written']   # updates' and trades'
     whole = rows(package(tmp_path, 'whole', 0, 80))
     got = rows(tmp_path / 'repaired')
     assert got[0] == whole[0] and got[1] == whole[1]
@@ -275,19 +354,37 @@ def test_a_recording_with_nothing_to_gain_is_not_written(tmp_path):
 
 
 def test_only_what_fits_among_a_recordings_own_rows_is_added_to_it():
-    # a's rows of a security (frames, source times, their batches' clocks) and b's candidates, one each way a row can fail to fit.
+    # a's rows of a security (frames, source times, their batches) and the clocks of those batches; b's candidates (frames, times,
+    # their batches' clocks), one each way a row can fail to fit.
     a = _repair.Rows(None, np.array([1, 5, 9]), np.array([10, 50, 90]), np.array([0, 1, 2]))
-    b = _repair.Rows(None, np.array([0, 3, 7, 7, 12, 20, 6]), np.array([5, 30, 95, 70, 120, 400, 60]), np.zeros(7, np.int64))
-    b_clock = np.array([5, 30, 95, 70, 120, 400, 40])
-    fits, misplaced, outside = _repair.fit(a, b, np.ones(7, bool), np.array([10, 50, 90]), b_clock, 10, 200)
-    # Frame 0's batch (clock 5) starts before the range: outside. 3 fits between frames 1 and 5; 7 at time 95 is later than the row
-    # after it (frame 9 at 90): misplaced; 7 at 70 fits; 12 follows the last row: fits; 20's batch is past the end: outside; 6's
-    # batch clock (40) is earlier than the row before it (frame 5 in a batch at 50): misplaced.
-    assert fits.tolist() == [False, True, False, True, True, False, False]
+    a_clock = np.array([10, 50, 90])
+    b = _repair.Rows(None, np.array([0, 3, 6, 7, 7, 12, 20]), np.array([5, 30, 60, 70, 95, 120, 400]), np.zeros(7, np.int64))
+    b_clock = np.array([5, 30, 40, 70, 95, 120, 400])
+    own, join, rank, misplaced, outside = _repair.fit(a, b, np.ones(7, bool), a_clock, b_clock, 10, 200)
+    # Frame 0's batch (clock 5) starts before the range: outside. 3 fits between frames 1 and 5; 6's batch clock (40) is earlier than
+    # the row before it (frame 5 in a batch at 50): misplaced; 7 at 70 fits; 7 at time 95 is later than the row after it (frame 9 at
+    # 90): misplaced; 12 follows the last row: fits; 20's batch is past the end: outside.
+    assert own.tolist() == [False, True, False, True, False, True, False] and (join == -1).all()
     assert misplaced == 2 and outside == 2
+    # An update that a later one of its security follows goes in a batch before that one's (the batch of a it comes before, and its
+    # place among those that come before the same batch: 6 and 7 are two rows between frames 5 and 9), whatever the clocks say;
+    # one that nothing follows goes in a batch of its own, and 7's disagreeing time still does not fit.
+    own, join, rank, misplaced, outside = _repair.fit(a, b, np.ones(7, bool), a_clock, b_clock, 10, 200, joining=True)
+    assert own.tolist() == [False, False, False, False, False, True, False]
+    assert join.tolist() == [-1, 1, 2, 2, -1, -1, -1] and rank.tolist() == [0, 0, 0, 1, 0, 0, 0]
+    assert misplaced == 1 and outside == 2
+    # A row at the clock of the row after it cannot have a batch of its own (it would come after that row's), but it can come before.
+    equal = _repair.Rows(None, np.array([4]), np.array([45]), np.zeros(1, np.int64))
+    assert _repair.fit(a, equal, np.ones(1, bool), a_clock, np.array([50]), 10, 200)[0].tolist() == [False]
+    assert _repair.fit(a, equal, np.ones(1, bool), a_clock, np.array([50]), 10, 200, joining=True)[1].tolist() == [1]
+    # After a's last row of the security nothing comes before the batch of: a clock before that row's batch cannot be a batch of its own
+    # either, and the batch before would give the update a receipt time earlier than a could know it.
+    tail = _repair.Rows(None, np.array([12]), np.array([120]), np.zeros(1, np.int64))
+    own, join, _, misplaced, _ = _repair.fit(a, tail, np.ones(1, bool), a_clock, np.array([60]), 10, 200, joining=True)
+    assert not own.any() and (join == -1).all() and misplaced == 1
     # A security with none of a's rows has nothing to be in order with: whatever is in range fits.
     none = _repair.fit(_repair.Rows(), b, np.ones(7, bool), np.zeros(0, np.int64), b_clock, 10, 200)
-    assert none[0].tolist() == [False, True, True, True, True, False, True] and none[1:] == (0, 2)
+    assert none[0].tolist() == [False, True, True, True, True, True, False] and none[3:] == (0, 2)
 
 
 def test_trades_a_recording_lost_all_of_are_added_to_a_security_it_does_record(tmp_path, group):
@@ -407,11 +504,11 @@ def test_the_command_reports_and_writes_the_package(tmp_path, capsys):
     cli.main(['repair', str(a), '--from', str(b)])
     entry = json.loads(capsys.readouterr().out)['recordings'][0]
     report = entry['sources'][0]
-    assert report['repair']['batches'] == 1 and report['repair']['quotes'] == len(updates(30)) and not entry['written']
+    assert report['repair']['batches'] == 3 and report['repair']['quotes'] == len(updates(30)) and not entry['written']
     cli.main(['repair', str(a), '--from', str(b), '--output', str(tmp_path / 'out'), '--until', '09:00:09'])
     written = json.loads(capsys.readouterr().out)['recordings'][0]
     assert written['reach'] == '09:00:09.000' and written['written']
-    assert written['sources'][0]['repair']['batches'] == 1 + len([f for f in range(81, 91) if updates(f) or trades(f)])
+    assert written['sources'][0]['repair']['batches'] == 3 + len([f for f in range(81, 91) if updates(f) or trades(f)])
     assert (tmp_path / 'out' / 'manifest.json').exists()
     with pytest.raises(SystemExit):
         cli.main(['repair', str(a)])   # --from is not optional
