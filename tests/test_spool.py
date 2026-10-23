@@ -473,6 +473,107 @@ def test_a_segment_of_hundreds_of_parts_ships_and_is_kept_whatever_a_command_lin
     assert kept is not None and (kept / _parquet.DEPTHS).exists()
 
 
+def _not_started(*arguments, **options):
+    raise OSError(206, 'The filename or extension is too long')   # Windows, of a command line beyond 32,767 characters
+
+
+def test_a_piece_that_could_not_be_packaged_is_tried_again_later_from_the_same_parts(tmp_path, monkeypatch):
+    # The parts of a piece whose packaging failed before the program ran (or in it) stay unshipped, so nothing of the day is
+    # lost; the piece is tried again, but after a while, a few times, and once more at the day's end: a day that failed at
+    # every part written (every 0.7 s, 22,000 times) closed a part each time and never saved anything.
+    monkeypatch.setattr(_spool, 'MAX_PIECE_ROWS', 8)
+    batches = session()[:30]
+    spool = spooled(tmp_path, batches)
+    spool.close_part(wait=True)
+    asked, real = [], _native.package
+    monkeypatch.setattr(_native, 'package', lambda *a, **k: asked.append(a[1]) or _not_started())
+    with pytest.raises(OSError):
+        spool.ship(tmp_path / 'first')
+    assert spool.shipped == 0 and spool.attempts == 1 and spool.last_parts == asked[0] and spool.piece_start == OPEN_US
+    assert json.loads((spool.path / 'shipped.json').read_text())['parts'] == 0 if (spool.path / 'shipped.json').exists() else True
+    assert spool.ship(tmp_path / 'again') is None and len(asked) == 1, 'not at the next part written: after RETRY_SECONDS'
+    for attempt in range(2, _spool.MAX_ATTEMPTS + 1):
+        spool._failed_at -= _spool.RETRY_SECONDS
+        with pytest.raises(OSError):
+            spool.ship(tmp_path / 'again')
+        assert asked[-1] == asked[0] and spool.shipped == 0 and spool.attempts == attempt, 'the same piece, from the bootstrap'
+    spool._failed_at -= _spool.RETRY_SECONDS
+    assert spool.ship(tmp_path / 'again') is None and len(asked) == _spool.MAX_ATTEMPTS, 'tried enough for one day'
+    monkeypatch.setattr(_native, 'package', real)
+    pieces = _pieces(spool, tmp_path, final=True, repair=True)   # the day's end tries once more, and the program is back
+    assert len(pieces) > 1 and spool.attempts == 0 and spool._failed_at is None and spool.shipped == len(spool.parts())
+    assert pieces[0][1]['summary']['first_source_time_us'] == OPEN_US
+    quotes = {k for d, *_ in pieces for k in _content(d)[0]}
+    assert len(quotes) == sum(len(b.get('quotes', ())) for b in batches[1:]), 'nothing of the day is lost'
+
+
+def test_a_refused_piece_is_not_tried_again_and_its_tables_are_kept(tmp_path, monkeypatch):
+    monkeypatch.setattr(_spool, 'MAX_PIECE_ROWS', 8)
+    batches = session()[:30]
+    spool = spooled(tmp_path, batches)
+    spool.close_part(wait=True)
+    real = cli.package_parts
+    monkeypatch.setattr(cli, 'package_parts', lambda *a, **k: schema.require(False, 'The package is 999 MiB; the archive accepts up to 1 MiB'))
+    with pytest.raises(ValueError, match='archive accepts'):
+        spool.ship(tmp_path / 'first')
+    tried = spool.shipped
+    assert tried == len(spool.last_parts) > 0 and spool.attempts == 1
+    kept = spool.keep(tmp_path / 'kept')
+    assert kept is not None and (kept / _parquet.DEPTHS).exists() and spool.shipped == tried
+    monkeypatch.setattr(cli, 'package_parts', real)
+    rest = _pieces(spool, tmp_path, final=True, repair=True)
+    assert rest and rest[0][1]['summary']['first_source_time_us'] == _parquet.summarize(kept)['last_source_time_us'], \
+        'the next piece starts where the refused one ended'
+    quotes = {k for d in [kept, *(d for d, *_ in rest)] for k in _content(d)[0]}
+    assert len(quotes) == sum(len(b.get('quotes', ())) for b in batches[1:])
+
+
+def test_a_piece_whose_cut_cannot_be_made_is_kept_from_the_days_bootstrap(tmp_path, monkeypatch):
+    # Where the shipped pieces left the book comes from their parts (brisk-parquet state); when that fails, what is kept is the
+    # day from its bootstrap through the piece, the shipped morning included: more than once, never less.
+    monkeypatch.setattr(_spool, 'MAX_PIECE_ROWS', 8)
+    batches = session()[:30]
+    spool = spooled(tmp_path, batches)
+    spool.close_part(wait=True)
+    first = spool.ship(tmp_path / 'first')
+    assert first is not None
+    spool._writer.shutdown()
+    again = _spool.Spool.reopen(spool.path)   # as after a crash: the book where the morning left it is not in memory
+    monkeypatch.setattr(_native, 'state', _not_started)
+    with pytest.raises(OSError):
+        again.ship(tmp_path / 'second', final=True, repair=True)
+    assert again.shipped == spool.shipped and again.last_parts and again.piece_start is None
+    kept = again.keep(tmp_path / 'kept')
+    assert kept is not None and again.shipped == again.parts().index(again.last_parts[-1]) + 1
+    bootstrap = _parquet.bootstrap_row(kept)
+    assert bootstrap['source_time_us'] == OPEN_US and bootstrap['seq'] == 0, 'the day\'s own bootstrap, not a cut\'s'
+    quotes = _content(kept)[0]
+    assert set(_content(tmp_path / 'first')[0]) < set(quotes)
+    assert len(quotes) == sum(len(b.get('quotes', ())) for b in batches[1:]) if again.shipped == len(again.parts()) else True
+
+
+def test_keeping_a_running_days_piece_leaves_its_open_part_open_and_a_failed_one_no_staging(tmp_path, monkeypatch):
+    monkeypatch.setattr(_spool, 'MAX_PIECE_ROWS', 8)
+    batches = session()
+    spool = spooled(tmp_path, batches[:25])
+    spool.close_part(wait=True)
+    _spool.PART_BYTES = 10**9
+    spool.add(batches[25], lines(batches)[25])   # a part still open
+    monkeypatch.setattr(cli, 'package_parts', lambda *a, **k: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        spool.ship(tmp_path / 'first')
+    closed = len(spool.parts())
+    kept = spool.keep(tmp_path / 'kept')
+    assert kept is not None and len(spool.parts()) == closed and spool._lines, 'the open part goes on filling'
+    staging = lambda: [d.name for d in spool.path.iterdir() if d.name.startswith('tmp')]  # noqa: E731
+    assert staging() == []
+    monkeypatch.setattr(_native, 'package', lambda *a, **k: 1 // 0)
+    with pytest.raises(ZeroDivisionError):
+        spool.keep(tmp_path / 'kept2')
+    assert staging() == []
+    assert _spool.Spool.reopen(spool.path).keep(tmp_path / 'kept3') is None, 'its parts are kept: nothing is left to keep'
+
+
 def test_a_crashed_spool_ships_what_is_left_from_where_it_was(tmp_path, monkeypatch):
     monkeypatch.setattr(_spool, 'MAX_PIECE_ROWS', 8)
     batches = session()[:30]   # cut short: no end
