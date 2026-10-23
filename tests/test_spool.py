@@ -13,7 +13,7 @@ import pytest
 import briskapi
 import briskapi.cli as cli
 import briskapi.schema as schema
-from briskapi import _live, _parquet, _spool
+from briskapi import _live, _native, _parquet, _spool
 
 OPEN_US = 9 * 3600 * 10**6
 
@@ -67,6 +67,25 @@ def spooled(tmp_path, batches, part_bytes=1500):
 @pytest.fixture(autouse=True)
 def small_parts(monkeypatch):
     monkeypatch.setattr(_spool, 'PART_BYTES', _spool.PART_BYTES)
+
+
+def many_parts(tmp_path, count, root=None):
+    """A segment of `count` batches spooled a batch to a part, as a day of ten thousand updates a second is (a part every few
+    seconds): its bootstrap through Spool.add, the other parts written by brisk-parquet on a few threads at once, and the spool
+    reopened as a recovered one is. The paths of the parts, listed, run to more than a Windows command line holds."""
+    from concurrent.futures import ThreadPoolExecutor
+    batches = session(frames=count - 3)
+    _spool.PART_BYTES, spool = 1, _spool.Spool(root=root or tmp_path / ('spool-' + 'x' * 40))
+    spool.add(batches[0], lines(batches)[0])
+    spool.close_part(wait=True)
+    midnight = _parquet.midnight_ns(batches[0]['trading_date'])
+    every = lines(batches)
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda n: _native.part([every[n]], spool.path / 'parts' / f'{n + 1:06d}', midnight), range(1, len(batches))))
+    spool._writer.shutdown()
+    spool = _spool.Spool.reopen(spool.path)
+    assert len(spool.parts()) == len(batches) == count and sum(len(str(p)) + 1 for p in spool.parts()) > 32_767
+    return spool, batches
 
 
 def same_tables(left, right, names=_parquet.FILES):
@@ -431,6 +450,27 @@ def test_a_recordings_bootstrap_is_read_without_decoding_its_batches(tmp_path, m
     pq.write_table(_parquet.BATCH_SCHEMA.empty_table(), empty / _parquet.BATCHES)
     with pytest.raises(Exception, match='no bootstrap'):
         _parquet.bootstrap_row(empty)
+
+
+def test_a_segment_of_hundreds_of_parts_ships_and_is_kept_whatever_a_command_line_holds(tmp_path, monkeypatch):
+    # A day's parts (1,670 by 11:11 on a 135-million-update day) listed as the program's arguments did not start it on
+    # Windows (WinError 206, 32,767 characters), and the day was lost; they go on its standard input.
+    spool, batches = many_parts(tmp_path, 500)
+    commands = []
+    real = _native.subprocess.Popen
+    monkeypatch.setattr(_native.subprocess, 'Popen', lambda command, **options: commands.append(command) or real(command, **options))
+    monkeypatch.setattr(_spool, 'MAX_PIECE_ROWS', 600)   # the first piece some 300 parts, the second after their cut
+    pieces = _pieces(spool, tmp_path, final=True)
+    assert len(pieces) == 2 and spool.shipped == 500
+    for directory, manifest, _ in pieces:
+        assert _parquet.inspect_package(directory, manifest) == manifest['summary']
+    quotes = {k for d, *_ in pieces for k in _content(d)[0]}
+    assert len(quotes) == sum(len(b.get('quotes', ())) for b in batches[1:])
+    assert len(commands) >= 2 and all(sum(len(str(word)) + 1 for word in command) < 2000 for command in commands), \
+        'the parts are not on the command line, whatever their number'
+    assert not any(str(spool.parts()[-1]) in map(str, command) for command in commands)
+    kept = spool.keep(tmp_path / 'kept')
+    assert kept is not None and (kept / _parquet.DEPTHS).exists()
 
 
 def test_a_crashed_spool_ships_what_is_left_from_where_it_was(tmp_path, monkeypatch):
